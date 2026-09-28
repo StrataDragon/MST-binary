@@ -1,5 +1,5 @@
 import type { ConnectionStatus } from "../hooks/useMachineConnection";
-import type { RobotState, TaskType } from "../integration/protocol";
+import type { RobotState, TaskType, ChainStage } from "../integration/protocol";
 import { config } from "../config";
 import { getTaskConfig } from "../state/taskConfig";
 
@@ -27,16 +27,18 @@ function connectionCopy(status: ConnectionStatus): { text: string; dot: "online"
 
 export function TopBar({
   connectionStatus,
-  backendOnline,
   jobId,
   reward,
   taskType,
+  chainStage,
+  txHash,
 }: {
   connectionStatus: ConnectionStatus;
-  backendOnline?: boolean | null;
   jobId: string | null;
   reward?: string;
   taskType?: TaskType | null;
+  chainStage?: ChainStage | null;
+  txHash?: string | null;
 }) {
   const conn = connectionCopy(connectionStatus);
 
@@ -60,12 +62,25 @@ export function TopBar({
           </div>
         </div>
         <div className="metric-chip">
-          <div className="metric-label">BACKEND API</div>
-          <div className="metric-value">
-            <span className={`dot ${backendOnline ? "online" : backendOnline === false ? "offline" : "pending"}`} />
-            {backendOnline ? "ONLINE (:4000)" : backendOnline === false ? "STANDALONE" : "CHECKING…"}
+          <div className="metric-label">BLOCKCHAIN</div>
+          <div
+            className="metric-value"
+            style={{
+              color: chainStage ? "#00f2fe" : "var(--text-muted)",
+              fontWeight: 500,
+            }}
+          >
+            {chainStage ? (
+              <span>
+                {chainStage.replace("_", " ")}
+                {txHash ? ` (${txHash.slice(0, 6)}…${txHash.slice(-4)})` : ""}
+              </span>
+            ) : (
+              "NOT CONTROLLED HERE"
+            )}
           </div>
         </div>
+
         <div className="metric-chip">
           <div className="metric-label">CURRENT JOB</div>
           <div className="metric-value">{jobId ?? "—"}</div>

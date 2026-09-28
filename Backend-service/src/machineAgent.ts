@@ -189,6 +189,120 @@ export async function submitEvidenceAndProof(
   };
 }
 
+export async function acceptJobOnly(jobId: string, machineText: string = MACHINE_ID_TEXT) {
+  const escrow = getEscrow(machineWallet);
+  const targetId = machineIdToBytes32(machineText);
+  const rcAccept = await (await escrow.acceptJob(jobId, targetId)).wait();
+  upsertJob(jobId, {
+    machineId: machineText,
+    stage: "accepted",
+    txs: { accept: rcAccept!.hash },
+  });
+  recordAndEmitTx({
+    id: `tx-accept-${Date.now()}`,
+    txHash: rcAccept!.hash,
+    from: machineWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "escrow-accept",
+    status: "confirmed",
+    gasUsed: `${rcAccept?.gasUsed.toString()} gas`,
+    blockNumber: rcAccept?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId,
+    nodeType: "normal",
+  });
+  return rcAccept!.hash;
+}
+
+export async function startExecutionOnly(jobId: string) {
+  const escrow = getEscrow(machineWallet);
+  const rcStart = await (await escrow.startExecution(jobId)).wait();
+  upsertJob(jobId, { stage: "executing", txs: { start: rcStart!.hash } });
+  recordAndEmitTx({
+    id: `tx-start-${Date.now()}`,
+    txHash: rcStart!.hash,
+    from: machineWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "escrow-start",
+    status: "confirmed",
+    gasUsed: `${rcStart?.gasUsed.toString()} gas`,
+    blockNumber: rcStart?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId,
+    nodeType: "normal",
+  });
+  return rcStart!.hash;
+}
+
+export async function submitSimulatorEvidenceAndProof(
+  jobId: string,
+  evidence: {
+    jobId: string;
+    machineId: string;
+    taskType: string;
+    sourcePosition: { x: number; y: number };
+    targetPosition: { x: number; y: number };
+    finalPosition: { x: number; y: number };
+    objectDelivered: boolean;
+    completedAt: string;
+    simulateFailure?: boolean;
+  },
+  result: "success" | "fail" = "success"
+) {
+  const escrow = getEscrow(machineWallet);
+  const latest = await provider.getBlock("latest");
+  const evidenceHash = hashEvidence(evidence);
+
+  const proof = {
+    jobId,
+    machineId: machineIdBytes32,
+    result: result === "success" ? ProofResult.SUCCESS : ProofResult.FAILED,
+    timestamp: latest!.timestamp,
+    nonce: randomNonce(),
+    evidenceHash,
+  };
+
+  const signature = await signProof(
+    machineWallet,
+    escrowDomain(cfg.chainId, cfg.addresses.JobEscrow),
+    proof
+  );
+
+  const rc = await (await escrow.submitProof(proof, signature)).wait();
+  upsertJob(jobId, { stage: "proof_submitted", evidence, txs: { submitProof: rc!.hash } });
+  recordAndEmitTx({
+    id: `tx-proof-${Date.now()}`,
+    txHash: rc!.hash,
+    from: machineWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "proof-submit",
+    status: "confirmed",
+    gasUsed: `${rc?.gasUsed.toString()} gas`,
+    blockNumber: rc?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId,
+    nodeType: result === "success" ? "normal" : "suspicious",
+  });
+
+  return {
+    proof: {
+      ...proof,
+      timestamp: proof.timestamp.toString(),
+      nonce: proof.nonce.toString(),
+    },
+    signature,
+    evidence,
+    submitProofTx: rc!.hash,
+  };
+}
+
 export function getMachineAddress(): string {
   return machineWallet.address;
 }
+

@@ -20,12 +20,6 @@ export const config = {
    */
   simulatorWsUrl: readEnv("VITE_SIMULATOR_WS_URL", "ws://localhost:8080"),
 
-  /**
-   * HTTP API URL of Member 3's machine agent / verifier service.
-   * Defaults to http://localhost:4000
-   */
-  backendHttpUrl: readEnv("VITE_BACKEND_HTTP_URL", "http://localhost:4000"),
-
   /** If true, runs entirely offline with a built-in fake backend for testing. */
   mockMode: readEnv("VITE_MOCK_MODE", "true") === "true",
 

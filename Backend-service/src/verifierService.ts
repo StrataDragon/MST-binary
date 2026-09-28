@@ -36,15 +36,9 @@ export interface VerifyRequest {
     evidenceHash: string;
   };
   signature: string;
-  evidence: {
-    jobId: string;
-    machineId: string;
-    packageId: string;
-    target: { zone: string; x: number; y: number };
-    finalPosition: { x: number; y: number };
-    delivered: boolean;
-  };
+  evidence: any;
 }
+
 
 export interface VerifierVote {
   name: string;
@@ -102,11 +96,15 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
   const machineActive = Boolean(machine.active);
   const rightJob = req.evidence.jobId === req.jobId;
   const rightMachine = req.evidence.machineId === machineIdToString(job.machineId);
+  const targetX = (req.evidence as any).targetPosition?.x ?? req.evidence.target?.x;
+  const targetY = (req.evidence as any).targetPosition?.y ?? req.evidence.target?.y;
   const atTarget =
-    req.evidence.finalPosition?.x === req.evidence.target?.x &&
-    req.evidence.finalPosition?.y === req.evidence.target?.y;
-  const delivered = req.evidence.delivered === true;
+    req.evidence.finalPosition?.x === targetX &&
+    req.evidence.finalPosition?.y === targetY;
+  const delivered =
+    (req.evidence as any).objectDelivered === true || req.evidence.delivered === true;
   const machineReportedSuccess = req.proof.result === 1;
+
 
   // 2. Multi-verifier simulation voting
   // Verifier Alpha: Cryptography & Hashes

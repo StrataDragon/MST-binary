@@ -16,8 +16,10 @@
     "export-abi": "hardhat run scripts/export-abi.ts",
     "demo:local": "hardhat run scripts/demo-e2e.ts",
     "smoke:mst": "hardhat run scripts/smoke-deploy.ts --network mst",
-    "smoke:local": "hardhat run scripts/smoke-deploy.ts"
+    "smoke:local": "hardhat run scripts/smoke-deploy.ts",
+    "e2e": "hardhat run scripts/e2e.ts --network localhost"
   },
+
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "6.1.2",
     "@openzeppelin/contracts": "5.1.0",

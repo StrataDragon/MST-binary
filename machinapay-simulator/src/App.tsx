@@ -10,17 +10,18 @@ import { ResultToast } from "./components/ResultToast";
 export default function App() {
   const {
     connectionStatus,
-    backendOnline,
     robotState,
     phaseProgress,
     currentJob,
     timeline,
     lastResult,
-    verification,
     executionSeconds,
     isMockMode,
     batteryPercent,
     sendTestJob,
+    chainStage,
+    txHash,
+    chainReward,
   } = useMachineConnection();
 
   return (
@@ -28,26 +29,28 @@ export default function App() {
       <header className="app-header">
         <TopBar
           connectionStatus={connectionStatus}
-          backendOnline={backendOnline}
           jobId={currentJob?.jobId ?? null}
-          reward={currentJob?.reward}
+          reward={chainReward ?? currentJob?.reward}
           taskType={currentJob?.taskType ?? null}
+          chainStage={chainStage}
+          txHash={txHash}
         />
       </header>
 
       <main className="app-main">
         <aside className="side-panel left">
-          <JobPanel job={currentJob} executionSeconds={executionSeconds} result={lastResult} verification={verification} />
+          <JobPanel job={currentJob} executionSeconds={executionSeconds} result={lastResult} />
         </aside>
 
         <div className="stage">
           <Scene3D
             state={robotState}
             phaseProgress={phaseProgress}
-            reward={currentJob?.reward ?? "100"}
+            reward={chainReward ?? currentJob?.reward ?? "100"}
             source={currentJob?.source}
             target={currentJob?.target}
             taskType={currentJob?.taskType ?? null}
+            isPaid={isMockMode ? robotState === "COMPLETED" : chainStage === "PAID"}
           />
           <div className="stage-vignette" />
           <div className="stage-scanlines" />
@@ -64,10 +67,11 @@ export default function App() {
             robotState={robotState}
             phaseProgress={phaseProgress}
             resultSent={lastResult !== null}
-            verification={verification}
+            chainStage={chainStage}
           />
         </aside>
       </main>
+
 
       <div className="telemetry-row">
         <TelemetryPanel robotState={robotState} phaseProgress={phaseProgress} job={currentJob} batteryPercent={batteryPercent} />

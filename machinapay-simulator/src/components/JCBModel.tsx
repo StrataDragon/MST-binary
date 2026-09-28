@@ -183,17 +183,15 @@ function Beam({
   metalness?: number;
   roughness?: number;
 }) {
-  const [fx, fy, fz] = from;
-  const [tx, ty, tz] = to;
   const { position, quaternion, length } = useMemo(() => {
-    const a = new THREE.Vector3(fx, fy, fz);
-    const b = new THREE.Vector3(tx, ty, tz);
+    const a = new THREE.Vector3(...from);
+    const b = new THREE.Vector3(...to);
     const dir = new THREE.Vector3().subVectors(b, a);
     const len = dir.length();
     const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
     const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
     return { position: mid, quaternion: quat, length: len };
-  }, [fx, fy, fz, tx, ty, tz]);
+  }, [from, to]);
 
   return (
     <mesh position={position} quaternion={quaternion} castShadow>
@@ -205,17 +203,15 @@ function Beam({
 
 /** Thin hydraulic ram: a cylinder body + a slightly recessed rod. Purely cosmetic. */
 function HydraulicRam({ from, to, radius = 0.045 }: { from: Vec3; to: Vec3; radius?: number }) {
-  const [fx, fy, fz] = from;
-  const [tx, ty, tz] = to;
   const { position, quaternion, length } = useMemo(() => {
-    const a = new THREE.Vector3(fx, fy, fz);
-    const b = new THREE.Vector3(tx, ty, tz);
+    const a = new THREE.Vector3(...from);
+    const b = new THREE.Vector3(...to);
     const dir = new THREE.Vector3().subVectors(b, a);
     const len = dir.length();
     const mid = new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5);
     const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
     return { position: mid, quaternion: quat, length: len };
-  }, [fx, fy, fz, tx, ty, tz]);
+  }, [from, to]);
 
   return (
     <group position={position} quaternion={quaternion}>

@@ -18,13 +18,38 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
     const escrow = getEscrow(signer);
     try {
       const jobId = keccak256(toUtf8Bytes(crypto.randomUUID()));
-      const metadataHash = keccak256(toUtf8Bytes(description));
+
+      // Call backend to canonicalize & store off-chain metadata, returning keccak256 hash
+      let metadataHash = keccak256(toUtf8Bytes(description));
+      try {
+        const backendUrl = (import.meta as any).env?.VITE_BACKEND_URL || "http://localhost:4000";
+        const metaRes = await fetch(`${backendUrl}/api/jobs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            taskType: "MOVE_OBJECT",
+            source: { x: 100, y: 300 },
+            target: { x: 600, y: 300 },
+            description,
+          }),
+        });
+        if (metaRes.ok) {
+          const metaJson = await metaRes.json();
+          if (metaJson.metadataHash) {
+            metadataHash = metaJson.metadataHash;
+          }
+        }
+      } catch (e) {
+        console.warn("Could not reach backend metadata service, using fallback hash", e);
+      }
+
       const durationSeconds = Math.max(1, Math.round(Number(minutes) * 60));
       const tx = await escrow.createJob(jobId, metadataHash, durationSeconds, description, {
         value: parseEther(reward || "0"),
       });
       await tx.wait();
       onCreated(jobId);
+
     } catch (err: any) {
       setError(decodeContractError(err, escrow));
     } finally {

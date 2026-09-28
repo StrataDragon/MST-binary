@@ -1,17 +1,14 @@
 import type { JobCompletedMessage, JobFailedMessage, StartJobMessage } from "../integration/protocol";
-import type { VerificationInfo } from "../hooks/useMachineConnection";
 import { getTaskConfig } from "../state/taskConfig";
 
 export function JobPanel({
   job,
   executionSeconds,
   result,
-  verification,
 }: {
   job: StartJobMessage | null;
   executionSeconds: number;
   result: JobCompletedMessage | JobFailedMessage | null;
-  verification?: VerificationInfo | null;
 }) {
   return (
     <div className="panel job-panel">
@@ -61,26 +58,6 @@ export function JobPanel({
               {!result ? "PENDING" : result.status}
             </span>
           </div>
-          {verification && (
-            <>
-              {verification.submitProofTx && (
-                <div className="job-row">
-                  <span className="k">Proof Tx</span>
-                  <span className="v" style={{ color: "var(--amber)" }} title={verification.submitProofTx}>
-                    {verification.submitProofTx.slice(0, 10)}…
-                  </span>
-                </div>
-              )}
-              {verification.settleTx && (
-                <div className="job-row">
-                  <span className="k">Settle Tx</span>
-                  <span className="v" style={{ color: "var(--green)" }} title={verification.settleTx}>
-                    {verification.settleTx.slice(0, 10)}…
-                  </span>
-                </div>
-              )}
-            </>
-          )}
         </>
       )}
     </div>

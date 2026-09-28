@@ -8,6 +8,7 @@ import type {
   Position,
   RobotState,
   StartJobMessage,
+  ChainStage,
 } from "../integration/protocol";
 import { isIncomingMessage } from "../integration/protocol";
 import { buildSampleJob, mockBackend } from "../integration/mockBackend";
@@ -35,24 +36,13 @@ function buildTimeline(taskType: TaskType | null): TimelineStep[] {
 
 export type ConnectionStatus = "CONNECTING" | "CONNECTED" | "DISCONNECTED" | "MOCK";
 
-export type VerificationInfo = {
-  submitted: boolean;
-  submitProofTx?: string;
-  passed?: boolean;
-  settleTx?: string;
-  attestationTx?: string;
-  error?: string;
-};
-
 export type MachineConnection = {
   connectionStatus: ConnectionStatus;
-  backendOnline: boolean | null;
   robotState: RobotState;
   phaseProgress: number;
   currentJob: StartJobMessage | null;
   timeline: TimelineStep[];
   lastResult: JobCompletedMessage | JobFailedMessage | null;
-  verification: VerificationInfo | null;
   executionSeconds: number;
   /** Where the object currently is in the animation, 0 = source, 1 = target. */
   objectCarryProgress: number;
@@ -61,13 +51,13 @@ export type MachineConnection = {
   batteryPercent: number;
   /** Dev-only helper, wired to buttons that only render in mock mode. */
   sendTestJob: (taskType: TaskType, simulateFailure?: boolean) => void;
-  /** Dispatches an on-chain job by accepting it via backend and launching the 3D execution */
-  dispatchOnChainJob?: (jobId: string) => Promise<void>;
+  chainStage: ChainStage | null;
+  txHash: string | null;
+  chainReward: string | null;
 };
 
 export function useMachineConnection(): MachineConnection {
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("CONNECTING");
-  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const [robotState, setRobotState] = useState<RobotState>("IDLE");
   const [phaseProgress, setPhaseProgress] = useState(0);
   const [currentJob, setCurrentJob] = useState<StartJobMessage | null>(null);
@@ -75,10 +65,13 @@ export function useMachineConnection(): MachineConnection {
   const [lastResult, setLastResult] = useState<JobCompletedMessage | JobFailedMessage | null>(
     null
   );
-  const [verification, setVerification] = useState<VerificationInfo | null>(null);
   const [executionSeconds, setExecutionSeconds] = useState(0);
   const [objectCarryProgress, setObjectCarryProgress] = useState(0);
   const [batteryPercent, setBatteryPercent] = useState(100);
+  const [chainStage, setChainStage] = useState<ChainStage | null>(null);
+  const [txHash, setTxHash] = useState<string | null>(null);
+  const [chainReward, setChainReward] = useState<string | null>(null);
+
 
   const wsRef = useRef<WebSocket | null>(null);
   const jobRunnerRef = useRef<{ cancel: () => void } | null>(null);
@@ -108,49 +101,6 @@ export function useMachineConnection(): MachineConnection {
     setBatteryPercent((prev) => Math.max(12, Number((prev - drain).toFixed(1))));
   }, []);
 
-  const submitEvidenceToBackend = useCallback(
-    async (
-      jobId: string,
-      result: "success" | "fail",
-      source: Position,
-      target: Position
-    ) => {
-      if (!config.backendHttpUrl) return;
-      try {
-        const res = await fetch(`${config.backendHttpUrl}/machine/jobs/${jobId}/evidence`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            packageId: "A",
-            target: { zone: "green", x: target.x, y: target.y },
-            finalPosition: result === "success" ? { x: target.x, y: target.y } : { x: source.x, y: source.y },
-            delivered: result === "success",
-            result,
-          }),
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setVerification({
-            submitted: true,
-            submitProofTx: data.submitProofTx,
-            passed: data.verification?.passed,
-            settleTx: data.verification?.settleTx,
-            attestationTx: data.verification?.attestationTx,
-          });
-        } else {
-          const err = await res.json().catch(() => ({}));
-          setVerification({
-            submitted: false,
-            error: err?.error || `HTTP ${res.status}`,
-          });
-        }
-      } catch (err: any) {
-        console.debug("[Member 3 Backend not reached]", err?.message);
-      }
-    },
-    []
-  );
-
   const resetToIdle = useCallback(() => {
     setRobotState("IDLE");
     setPhaseProgress(0);
@@ -158,23 +108,32 @@ export function useMachineConnection(): MachineConnection {
     setTimeline(buildTimeline(null));
     setObjectCarryProgress(0);
     setExecutionSeconds(0);
+    setChainStage(null);
+    setTxHash(null);
+    setChainReward(null);
     // BUG FIX: this used to be left set from the previous job, so
     // "Result Sent to Backend" stayed checked in the timeline even once the
     // machine was back at IDLE with no active job. IDLE must mean every
     // job-specific indicator, including this one, is cleared.
     setLastResult(null);
-    setVerification(null);
   }, []);
 
   const handleStartJob = useCallback(
     (msg: StartJobMessage) => {
+      // Guard against a second START_JOB arriving mid-run: the simulator must not silently cancel a running job
+      if (robotState !== "IDLE" && robotState !== "COMPLETED" && robotState !== "FAILED") {
+        console.warn(`[simulator] Ignored START_JOB for ${msg.jobId} because machine is busy in state ${robotState}`);
+        return;
+      }
+
       window.clearTimeout(resetTimerRef.current);
       jobRunnerRef.current?.cancel();
       cancelledJobIds.current.delete(msg.jobId);
 
       setCurrentJob(msg);
+      setChainStage("ESCROW_FUNDED");
+      if (msg.reward) setChainReward(msg.reward);
       setLastResult(null);
-      setVerification(null);
       setTimeline(buildTimeline(msg.taskType));
       setObjectCarryProgress(0);
 
@@ -236,7 +195,6 @@ export function useMachineConnection(): MachineConnection {
           };
           setLastResult(result);
           send(result);
-          submitEvidenceToBackend(msg.jobId, "fail", msg.source, msg.target);
           resetTimerRef.current = window.setTimeout(resetToIdle, config.autoResetDelayMs);
         },
         onCompleted: () => {
@@ -258,19 +216,28 @@ export function useMachineConnection(): MachineConnection {
           };
           setLastResult(result);
           send(result);
-          submitEvidenceToBackend(msg.jobId, "success", msg.source, msg.target);
           resetTimerRef.current = window.setTimeout(resetToIdle, config.autoResetDelayMs);
         },
       });
     },
-    [resetToIdle, send, drainBattery, submitEvidenceToBackend]
+    [resetToIdle, send, drainBattery]
   );
 
   const handleIncoming = useCallback(
     (msg: IncomingMessage) => {
+      if ("machineId" in msg && msg.machineId && msg.machineId !== config.machineId) {
+        console.warn(`[simulator] Ignored ${msg.type} for machine ${msg.machineId} (this machine is ${config.machineId})`);
+        return;
+      }
+
       switch (msg.type) {
         case "START_JOB":
           handleStartJob(msg);
+          break;
+        case "CHAIN_UPDATE":
+          setChainStage(msg.stage);
+          if (msg.txHash) setTxHash(msg.txHash);
+          if (msg.amount) setChainReward(msg.amount);
           break;
         case "CANCEL_JOB":
           cancelledJobIds.current.add(msg.jobId);
@@ -289,7 +256,7 @@ export function useMachineConnection(): MachineConnection {
           break;
       }
     },
-    [handleStartJob, resetToIdle]
+    [handleStartJob, resetToIdle, robotState]
   );
 
   // Connection lifecycle: real WebSocket, or mock backend wiring.
@@ -345,25 +312,6 @@ export function useMachineConnection(): MachineConnection {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Check if Member 3's backend HTTP service is reachable
-  useEffect(() => {
-    let mounted = true;
-    const checkBackend = async () => {
-      try {
-        const res = await fetch(`${config.backendHttpUrl}/health`, { signal: AbortSignal.timeout(2500) });
-        if (mounted) setBackendOnline(res.ok);
-      } catch {
-        if (mounted) setBackendOnline(false);
-      }
-    };
-    checkBackend();
-    const timer = setInterval(checkBackend, 6000);
-    return () => {
-      mounted = false;
-      clearInterval(timer);
-    };
-  }, []);
-
   // Heartbeat, independent of job execution.
   useEffect(() => {
     heartbeatRef.current = window.setInterval(() => {
@@ -389,50 +337,21 @@ export function useMachineConnection(): MachineConnection {
     [handleIncoming]
   );
 
-  const dispatchOnChainJob = useCallback(
-    async (jobId: string) => {
-      try {
-        const res = await fetch(`${config.backendHttpUrl}/machine/jobs/${jobId}/accept`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          throw new Error(data.error || "Backend failed to accept job on-chain");
-        }
-
-        handleIncoming({
-          type: "START_JOB",
-          jobId,
-          machineId: config.machineId,
-          taskType: "MOVE_OBJECT",
-          reward: "100",
-          source: { x: 100, y: 300 },
-          target: { x: 600, y: 300 },
-        });
-      } catch (e: any) {
-        console.error("dispatchOnChainJob error:", e);
-        throw e;
-      }
-    },
-    [handleIncoming]
-  );
-
   return {
     connectionStatus,
-    backendOnline,
     robotState,
     phaseProgress,
     currentJob,
     timeline,
     lastResult,
-    verification,
     executionSeconds,
     objectCarryProgress,
     isMockMode: config.mockMode,
     batteryPercent,
     sendTestJob,
-    dispatchOnChainJob,
+    chainStage,
+    txHash,
+    chainReward,
   };
 }
 

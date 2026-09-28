@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useMemo, useRef } from "react";
+import { Suspense, useRef } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import { OrbitControls, ContactShadows, Grid, MeshReflectorMaterial, Sparkles } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
@@ -8,7 +8,7 @@ import { JCBModel } from "./JCBModel";
 import { mapJobToWorld } from "../state/sceneMapping";
 import { getTaskConfig } from "../state/taskConfig";
 
-const ZoneMarker = React.memo(function ZoneMarker({
+function ZoneMarker({
   position,
   color,
   label,
@@ -47,71 +47,49 @@ const ZoneMarker = React.memo(function ZoneMarker({
       </Suspense>
     </group>
   );
-});
+}
 
-// Lightweight canvas-texture label with texture memoization and WebGL resource cleanup.
-const TextLabel = React.memo(function TextLabel({ text, color }: { text: string; color: string }) {
-  const texture = useMemo(() => {
-    const canvas = document.createElement("canvas");
-    canvas.width = 256;
-    canvas.height = 64;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.clearRect(0, 0, 256, 64);
-      // Longer zone labels (e.g. "MATERIAL PILE") need a smaller size to stay
-      // inside the canvas without clipping — shorter ones (e.g. "TARGET") keep
-      // the original larger size for legibility.
-      const fontSize = text.length > 9 ? 22 : text.length > 6 ? 26 : 30;
-      ctx.font = `600 ${fontSize}px 'IBM Plex Mono', monospace`;
-      ctx.fillStyle = color;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(text, 128, 32);
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, [text, color]);
-
-  useEffect(() => {
-    return () => {
-      texture.dispose();
-    };
-  }, [texture]);
-
+// Lightweight canvas-texture label so we avoid pulling in an extra font-loading dependency.
+function TextLabel({ text, color }: { text: string; color: string }) {
+  const canvas = document.createElement("canvas");
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext("2d")!;
+  ctx.clearRect(0, 0, 256, 64);
+  // Longer zone labels (e.g. "MATERIAL PILE") need a smaller size to stay
+  // inside the canvas without clipping — shorter ones (e.g. "TARGET") keep
+  // the original larger size for legibility.
+  const fontSize = text.length > 9 ? 22 : text.length > 6 ? 26 : 30;
+  ctx.font = `600 ${fontSize}px 'IBM Plex Mono', monospace`;
+  ctx.fillStyle = color;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, 128, 32);
+  const texture = new THREE.CanvasTexture(canvas);
   return (
     <sprite position={[0, 0.02, 0.95]} scale={[1.4, 0.35, 1]}>
       <spriteMaterial map={texture} transparent depthWrite={false} />
     </sprite>
   );
-});
+}
 
 function RewardPopup({ visible, reward, position }: { visible: boolean; reward: string; position: [number, number] }) {
   const group = useRef<THREE.Group>(null);
   const startedAt = useRef<number | null>(null);
 
-  const texture = useMemo(() => {
+  const texture = useRef<THREE.CanvasTexture | null>(null);
+  if (!texture.current) {
     const canvas = document.createElement("canvas");
     canvas.width = 320;
     canvas.height = 90;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.font = "700 46px 'IBM Plex Mono', monospace";
-      ctx.fillStyle = "#3adb76";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.fillText(`+${reward} MST`, 160, 45);
-    }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }, [reward]);
-
-  useEffect(() => {
-    return () => {
-      texture.dispose();
-    };
-  }, [texture]);
+    const ctx = canvas.getContext("2d")!;
+    ctx.font = "700 46px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = "#3adb76";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`+${reward} MST`, 160, 45);
+    texture.current = new THREE.CanvasTexture(canvas);
+  }
 
   useFrame(() => {
     if (!group.current) return;
@@ -132,7 +110,7 @@ function RewardPopup({ visible, reward, position }: { visible: boolean; reward: 
   return (
     <group ref={group} visible={false}>
       <sprite scale={[1.8, 0.5, 1]}>
-        <spriteMaterial map={texture} transparent depthWrite={false} />
+        <spriteMaterial map={texture.current} transparent depthWrite={false} />
       </sprite>
     </group>
   );
@@ -182,6 +160,7 @@ export function Scene3D({
   source,
   target,
   taskType,
+  isPaid,
 }: {
   state: RobotState;
   phaseProgress: number;
@@ -189,6 +168,7 @@ export function Scene3D({
   source?: Position;
   target?: Position;
   taskType?: TaskType | null;
+  isPaid?: boolean;
 }) {
   const driving = state === "MOVING_TO_OBJECT" || state === "MOVING_TO_TARGET";
   const { sourceWorld, targetWorld } = mapJobToWorld(source, target);
@@ -252,7 +232,7 @@ export function Scene3D({
         scale={taskType === "LOAD_AND_DUMP" ? 1.4 : 1}
       />
 
-      <RewardPopup visible={state === "COMPLETED"} reward={reward} position={targetWorld} />
+      <RewardPopup visible={isPaid ?? (state === "COMPLETED")} reward={reward} position={targetWorld} />
 
       <Barrier position={[-4.9, 0.17, 2.4]} />
       <Barrier position={[-4.9, 0.17, -2.4]} />

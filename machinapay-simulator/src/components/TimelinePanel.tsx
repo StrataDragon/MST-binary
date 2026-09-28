@@ -1,20 +1,23 @@
-import type { TimelineStep, VerificationInfo } from "../hooks/useMachineConnection";
-import type { RobotState } from "../integration/protocol";
+import type { TimelineStep } from "../hooks/useMachineConnection";
+import type { RobotState, ChainStage } from "../integration/protocol";
 
 export function TimelinePanel({
   timeline,
   robotState,
   phaseProgress,
   resultSent,
-  verification,
+  chainStage,
 }: {
   timeline: TimelineStep[];
   robotState: RobotState;
   phaseProgress: number;
   resultSent: boolean;
-  verification?: VerificationInfo | null;
+  chainStage?: ChainStage | null;
 }) {
   const activeIndex = timeline.findIndex((t) => t.state === robotState);
+  const isVerified = chainStage === "VERIFIED" || chainStage === "PAID" || chainStage === "REFUNDED";
+  const isPaid = chainStage === "PAID";
+  const isRefunded = chainStage === "REFUNDED";
 
   return (
     <div className="panel timeline-panel">
@@ -37,32 +40,20 @@ export function TimelinePanel({
             <span className="check">✓</span>
             <span>Result Sent to Backend</span>
           </div>
-
-          {verification?.submitProofTx ? (
-            <>
-              <div className="timeline-item done">
-                <span className="check">✓</span>
-                <span title={`Tx: ${verification.submitProofTx}`}>
-                  Proof Submitted: {verification.submitProofTx.slice(0, 10)}…
-                </span>
-              </div>
-              <div className={`timeline-item ${verification.passed ? "done" : "fail"}`}>
-                <span className="check">{verification.passed ? "✓" : "✕"}</span>
-                <span title={verification.settleTx ? `Settle Tx: ${verification.settleTx}` : undefined}>
-                  {verification.passed ? "Verifier Settled (PAID)" : "Verifier Rejected (REFUNDED)"}
-                  {verification.settleTx ? ` · ${verification.settleTx.slice(0, 8)}…` : ""}
-                </span>
-              </div>
-            </>
-          ) : verification?.error ? (
-            <div className="timeline-item fail">
-              <span className="check">✕</span>
-              <span>Backend: {verification.error}</span>
+          <div className={`timeline-item ${isVerified ? "done" : ""}`}>
+            <span className="check">{isVerified ? "✓" : ""}</span>
+            <span>Awaiting Backend Verification</span>
+          </div>
+          {isPaid && (
+            <div className="timeline-item done">
+              <span className="check">✓</span>
+              <span>Payment Released</span>
             </div>
-          ) : (
-            <div className="timeline-item">
-              <span className="check" />
-              <span>Awaiting Backend Verification</span>
+          )}
+          {isRefunded && (
+            <div className="timeline-item done">
+              <span className="check">✓</span>
+              <span>Refunded</span>
             </div>
           )}
         </>
@@ -70,3 +61,4 @@ export function TimelinePanel({
     </div>
   );
 }
+

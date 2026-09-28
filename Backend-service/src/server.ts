@@ -7,7 +7,10 @@ import { cfg, getEscrow } from "./config";
 import { acceptAndStart, submitEvidenceAndProof, getMachineAddress, MACHINE_ID_TEXT } from "./machineAgent";
 import { verifyAndSettle, getVerifierAddress, VerifyRequest } from "./verifierService";
 import { getJob, listJobs, upsertJob } from "./store";
-import { startEventListeners } from "./events";
+import { startChainListener } from "./chainListener";
+import { storeMetadata, getMetadataByHash } from "./metadataStore";
+import { getEvidence, listAllEvidence } from "./evidenceStore";
+import { handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
 import { getTransactions, addSseClient, addWsClient, recordAndEmitTx, TransactionItem } from "./transactionStore";
 
 const app = express();
@@ -39,6 +42,32 @@ app.get("/health", (_req, res) => {
     machine: { address: getMachineAddress(), machineId: MACHINE_ID_TEXT },
     verifier: { address: getVerifierAddress() },
   });
+});
+
+// ---------------------------------------------------------------- metadata API
+/** Off-chain job metadata endpoint: saves task parameters, returns canonical JSON + keccak256 hash */
+app.post("/api/jobs", (req, res) => {
+  const { taskType, source, target, simulateFailure, description } = req.body ?? {};
+  const stored = storeMetadata({ taskType, source, target, simulateFailure, description });
+  res.json(stored);
+});
+
+app.get("/api/jobs/metadata/:hash", (req, res) => {
+  const meta = getMetadataByHash(req.params.hash);
+  if (!meta) return res.status(404).json({ error: "metadata not found" });
+  res.json(meta);
+});
+
+// ---------------------------------------------------------------- evidence API
+/** Off-chain evidence retrieval keyed by jobId */
+app.get("/api/evidence/:jobId", (req, res) => {
+  const ev = getEvidence(req.params.jobId);
+  if (!ev) return res.status(404).json({ error: "evidence not found" });
+  res.json(ev);
+});
+
+app.get("/api/evidence", (_req, res) => {
+  res.json(listAllEvidence());
 });
 
 // ---------------------------------------------------------------- transactions API & SSE Stream
@@ -164,8 +193,25 @@ const server = createServer(app);
 const wss = new WebSocketServer({ server });
 
 wss.on("connection", (ws, req) => {
-  console.log(`[ws] Client connected from ${req.socket.remoteAddress}`);
-  addWsClient(ws);
+  const url = req.url || "";
+  console.log(`[ws] Client connected from ${req.socket.remoteAddress} on ${url}`);
+
+  if (url === "/ws" || url.startsWith("/ws?") || url.startsWith("/ws/")) {
+    // Member 2 3D Robot Simulator WebSocket
+    ws.on("message", (data) => {
+      handleSimulatorMessage(ws, data.toString());
+    });
+    ws.on("close", () => {
+      removeMachineSocket(ws);
+    });
+    ws.on("error", (err) => {
+      console.warn("[ws] Simulator socket error:", err);
+      removeMachineSocket(ws);
+    });
+  } else {
+    // Frontend transaction feed WebSocket
+    addWsClient(ws);
+  }
 });
 
 server.listen(PORT, () => {
@@ -174,12 +220,13 @@ server.listen(PORT, () => {
   console.log(`  verifier wallet: ${getVerifierAddress()}`);
   console.log(`  HTTP API:        http://localhost:${PORT}`);
   console.log(`  Transactions:    http://localhost:${PORT}/api/transactions`);
-  console.log(`  SSE stream:      http://localhost:${PORT}/api/transactions/stream`);
-  console.log(`  WebSocket:       ws://localhost:${PORT}/api/transactions/ws`);
+  console.log(`  Jobs API:        http://localhost:${PORT}/api/jobs`);
+  console.log(`  Simulator WS:    ws://localhost:${PORT}/ws`);
+  console.log(`  Feed WS:         ws://localhost:${PORT}/api/transactions/ws`);
   if (getVerifierAddress().toLowerCase() !== cfg.verifier.toLowerCase()) {
     const msg = `FATAL CONFIG MISMATCH: verifier address ${getVerifierAddress()} does not match JobEscrow verifier ${cfg.verifier}`;
     console.error(msg);
     throw new Error(msg);
   }
-  startEventListeners();
+  startChainListener();
 });
