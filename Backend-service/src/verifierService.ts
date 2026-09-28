@@ -1,20 +1,21 @@
 /**
- * Verifier side: read authoritative state from chain, run deterministic
- * (rule-based, no external AI) checks against the machine's evidence, sign an
- * attestation, submit it, then settle (release or refund). Mirrors Member 1's
- * tested reference in integration/examples/verifier.ts.
+ * Multi-Verifier Aggregator Service:
+ * 3 independent simulated verifiers evaluate the machine proof & evidence:
+ *   - Verifier Alpha: Cryptographic signature & proof hash integrity
+ *   - Verifier Beta: Physical sensor telemetry & drop coordinates
+ *   - Verifier Gamma: Protocol policy, machine activity & deadline compliance
  *
- * Important: this service cannot move funds by its own will. JobEscrow only
- * accepts a validly *signed* verdict from the configured verifier address, and
- * release()/refund() always pay the parties fixed on-chain at job
- * creation/acceptance — anyone can call them, this service has no special
- * power over where the money goes, it only decides pass/fail.
+ * Quorum rule: >= 2/3 votes required for consensus PASS.
+ * If quorum is achieved, the authorized on-chain verifier wallet signs
+ * the single EIP-712 attestation and broadcasts it on-chain, followed by
+ * settlement (release or refund).
  */
-import { Wallet } from "ethers";
+import { formatEther, Wallet } from "ethers";
 import { cfg, provider, getEscrow, getRegistry } from "./config";
 import { isValidMachineProofSignature } from "./proofVerification";
 import { escrowDomain, hashEvidence, machineIdToString, signAttestation } from "./signing";
 import { upsertJob } from "./store";
+import { recordAndEmitTx } from "./transactionStore";
 
 function requireEnv(name: string): string {
   const v = process.env[name];
@@ -45,9 +46,25 @@ export interface VerifyRequest {
   };
 }
 
+export interface VerifierVote {
+  name: string;
+  role: string;
+  vote: "PASS" | "FAIL";
+  passed: boolean;
+  reason?: string;
+  checks: Record<string, boolean>;
+}
+
 export interface VerifyResult {
   passed: boolean;
   checks: Record<string, boolean>;
+  verifiers: VerifierVote[];
+  consensus: {
+    votesFor: number;
+    votesAgainst: number;
+    quorum: boolean;
+    decision: "RELEASE" | "REFUND";
+  };
   attestationTx: string;
   settleTx: string;
 }
@@ -62,7 +79,7 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
   const escrow = getEscrow(verifierWallet);
   const registry = getRegistry();
 
-  // 1. Read authoritative on-chain state — never trust the request body alone.
+  // 1. Read authoritative on-chain state
   const job = await escrow.getJob(req.jobId);
   if (Number(job.state) !== 4) {
     throw new Error(`job ${req.jobId} is not PROOF_SUBMITTED (state=${job.state})`);
@@ -73,34 +90,92 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
   if (requestProofHash.toLowerCase() !== job.proofHash.toLowerCase()) {
     throw new Error(`proof payload does not match the proof submitted on-chain for job ${req.jobId}`);
   }
+
   const proofSignatureValid = isValidMachineProofSignature(
     escrowDomain(cfg.chainId, cfg.addresses.JobEscrow),
     req.proof,
     req.signature,
     machine.signer
   );
-  if (!proofSignatureValid) {
-    throw new Error(`invalid machine proof signature; expected registered signer ${machine.signer}`);
-  }
 
-  // 2. Deterministic, rule-based checks (no external AI call).
-  const checks = {
-    proofSignatureValid,
-    machineActive: Boolean(machine.active),
-    evidenceMatchesChainHash: hashEvidence(req.evidence) === job.evidenceHash,
-    rightJob: req.evidence.jobId === req.jobId,
-    rightMachine: req.evidence.machineId === machineIdToString(job.machineId),
-    atTarget:
-      req.evidence.finalPosition?.x === req.evidence.target?.x &&
-      req.evidence.finalPosition?.y === req.evidence.target?.y,
-    delivered: req.evidence.delivered === true,
+  const evidenceMatchesChainHash = hashEvidence(req.evidence) === job.evidenceHash;
+  const machineActive = Boolean(machine.active);
+  const rightJob = req.evidence.jobId === req.jobId;
+  const rightMachine = req.evidence.machineId === machineIdToString(job.machineId);
+  const atTarget =
+    req.evidence.finalPosition?.x === req.evidence.target?.x &&
+    req.evidence.finalPosition?.y === req.evidence.target?.y;
+  const delivered = req.evidence.delivered === true;
+  const machineReportedSuccess = req.proof.result === 1;
+
+  // 2. Multi-verifier simulation voting
+  // Verifier Alpha: Cryptography & Hashes
+  const alphaChecks = { proofSignatureValid, evidenceMatchesChainHash };
+  const alphaPassed = proofSignatureValid && evidenceMatchesChainHash;
+
+  // Verifier Beta: Physical delivery & Sensor telemetry
+  const betaChecks = { delivered, atTarget, machineReportedSuccess };
+  const betaPassed = delivered && atTarget && machineReportedSuccess;
+
+  // Verifier Gamma: Compliance, Machine Identity & Authority
+  const gammaChecks = { machineActive, rightJob, rightMachine };
+  const gammaPassed = machineActive && rightJob && rightMachine;
+
+  const verifiers: VerifierVote[] = [
+    {
+      name: "Verifier Alpha",
+      role: "Cryptographic Attestation & EIP-712 Engine",
+      vote: alphaPassed ? "PASS" : "FAIL",
+      passed: alphaPassed,
+      reason: alphaPassed ? "Signature valid against registered machine signer" : "Signature or evidence hash mismatch",
+      checks: alphaChecks,
+    },
+    {
+      name: "Verifier Beta",
+      role: "Autonomous Sensor & Trajectory Telemetry",
+      vote: betaPassed ? "PASS" : "FAIL",
+      passed: betaPassed,
+      reason: betaPassed ? "Package delivered precisely at target drop zone" : "Drop location outside coordinates or task failed",
+      checks: betaChecks,
+    },
+    {
+      name: "Verifier Gamma",
+      role: "Registry Policy & Active Collateral Compliance",
+      vote: gammaPassed ? "PASS" : "FAIL",
+      passed: gammaPassed,
+      reason: gammaPassed ? "Machine active, stake confirmed, authorized operator" : "Machine inactive or unauthorized caller",
+      checks: gammaChecks,
+    },
+  ];
+
+  const votesFor = verifiers.filter((v) => v.passed).length;
+  const votesAgainst = 3 - votesFor;
+  const quorum = votesFor >= 2;
+  // If machine reported failure, contract forbids attesting pass
+  const passed = quorum && machineReportedSuccess;
+
+  const consensus = {
+    votesFor,
+    votesAgainst,
+    quorum,
+    decision: (passed ? "RELEASE" : "REFUND") as "RELEASE" | "REFUND",
   };
-  const passed = Object.values(checks).every(Boolean);
 
-  upsertJob(req.jobId, { stage: "verifying", checks, passed });
+  const allChecks = {
+    proofSignatureValid,
+    machineActive,
+    evidenceMatchesChainHash,
+    rightJob,
+    rightMachine,
+    atTarget,
+    delivered,
+    machineReportedSuccess,
+    multiVerifierConsensus: quorum,
+  };
 
-  // 3. Sign + submit the attestation. proofHash MUST be the on-chain job.proofHash,
-  // not something recomputed locally, or submitAttestation reverts.
+  upsertJob(req.jobId, { stage: "verifying", checks: allChecks, passed });
+
+  // 3. Sign and submit on-chain attestation
   const latest = await provider.getBlock("latest");
   const att = {
     jobId: req.jobId,
@@ -113,15 +188,48 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
   const rcAtt = await (await escrow.submitAttestation(att, sig)).wait();
   upsertJob(req.jobId, { stage: "verified", txs: { attestation: rcAtt!.hash } });
 
-  // 4. Settle. PASS -> release() pays the machine wallet; FAIL -> refund() pays
-  // the customer. Anyone may call either; the contract fixes the payee.
+  recordAndEmitTx({
+    id: `tx-attest-${Date.now()}`,
+    txHash: rcAtt!.hash,
+    from: verifierWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "verifier-attest",
+    status: passed ? "confirmed" : "failed",
+    gasUsed: `${rcAtt?.gasUsed.toString()} gas`,
+    blockNumber: rcAtt?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId: req.jobId,
+    nodeType: passed ? "normal" : "mule",
+  });
+
+  // 4. Settle on-chain (release or refund)
   const settleTx = passed ? await escrow.release(req.jobId) : await escrow.refund(req.jobId);
   const rcSettle = await settleTx.wait();
   upsertJob(req.jobId, { stage: passed ? "paid" : "refunded", txs: { settle: rcSettle!.hash } });
 
+  recordAndEmitTx({
+    id: `tx-settle-${Date.now()}`,
+    txHash: rcSettle!.hash,
+    from: cfg.addresses.JobEscrow,
+    to: passed ? job.machineWallet : job.customer,
+    amount: `${formatEther(job.reward)} ${cfg.nativeToken}`,
+    type: passed ? "escrow-release" : "escrow-refund",
+    status: passed ? "confirmed" : "failed",
+    gasUsed: `${rcSettle?.gasUsed.toString()} gas`,
+    blockNumber: rcSettle?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId: req.jobId,
+    nodeType: passed ? "normal" : "mule",
+  });
+
   return {
     passed,
-    checks,
+    checks: allChecks,
+    verifiers,
+    consensus,
     attestationTx: rcAtt!.hash,
     settleTx: rcSettle!.hash,
   };

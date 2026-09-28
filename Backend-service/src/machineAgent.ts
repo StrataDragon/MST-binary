@@ -15,6 +15,7 @@ import {
   signProof,
 } from "./signing";
 import { upsertJob } from "./store";
+import { recordAndEmitTx } from "./transactionStore";
 
 export const MACHINE_ID_TEXT = process.env.MACHINE_ID || "M-042";
 
@@ -80,9 +81,39 @@ export async function acceptAndStart(jobId: string) {
     stage: "accepted",
     txs: { accept: rcAccept!.hash },
   });
+  recordAndEmitTx({
+    id: `tx-accept-${Date.now()}`,
+    txHash: rcAccept!.hash,
+    from: machineWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "escrow-accept",
+    status: "confirmed",
+    gasUsed: `${rcAccept?.gasUsed.toString()} gas`,
+    blockNumber: rcAccept?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId,
+    nodeType: "normal",
+  });
 
   const rcStart = await (await escrow.startExecution(jobId)).wait();
   upsertJob(jobId, { stage: "executing", txs: { start: rcStart!.hash } });
+  recordAndEmitTx({
+    id: `tx-start-${Date.now()}`,
+    txHash: rcStart!.hash,
+    from: machineWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "escrow-start",
+    status: "confirmed",
+    gasUsed: `${rcStart?.gasUsed.toString()} gas`,
+    blockNumber: rcStart?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId,
+    nodeType: "normal",
+  });
 
   return { acceptTx: rcAccept!.hash, startTx: rcStart!.hash };
 }
@@ -130,6 +161,21 @@ export async function submitEvidenceAndProof(
 
   const rc = await (await escrow.submitProof(proof, signature)).wait();
   upsertJob(jobId, { stage: "proof_submitted", evidence, txs: { submitProof: rc!.hash } });
+  recordAndEmitTx({
+    id: `tx-proof-${Date.now()}`,
+    txHash: rc!.hash,
+    from: machineWallet.address,
+    to: cfg.addresses.JobEscrow,
+    amount: "0.00 ETH",
+    type: "proof-submit",
+    status: "confirmed",
+    gasUsed: `${rc?.gasUsed.toString()} gas`,
+    blockNumber: rc?.blockNumber,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    jobId,
+    nodeType: result === "success" ? "normal" : "suspicious",
+  });
 
   return {
     proof: {

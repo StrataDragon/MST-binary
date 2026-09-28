@@ -1,11 +1,14 @@
 import "dotenv/config";
+import { createServer } from "http";
 import express from "express";
 import cors from "cors";
+import { WebSocketServer } from "ws";
 import { cfg, getEscrow } from "./config";
 import { acceptAndStart, submitEvidenceAndProof, getMachineAddress, MACHINE_ID_TEXT } from "./machineAgent";
 import { verifyAndSettle, getVerifierAddress, VerifyRequest } from "./verifierService";
 import { getJob, listJobs, upsertJob } from "./store";
 import { startEventListeners } from "./events";
+import { getTransactions, addSseClient, addWsClient, recordAndEmitTx, TransactionItem } from "./transactionStore";
 
 const app = express();
 app.use(cors());
@@ -38,7 +41,51 @@ app.get("/health", (_req, res) => {
   });
 });
 
-// ---------------------------------------------------------------- job status (for Member 4)
+// ---------------------------------------------------------------- transactions API & SSE Stream
+/** Returns all past ledger and simulated transactions */
+app.get("/api/transactions", (_req, res) => {
+  res.json(getTransactions());
+});
+
+/** Server-Sent Events (SSE) live transaction stream for Typology Radar and live feed */
+app.get("/api/transactions/stream", (req, res) => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+  });
+  if (typeof (res as any).flushHeaders === "function") {
+    (res as any).flushHeaders();
+  }
+
+  const cleanup = addSseClient(res);
+  req.on("close", cleanup);
+});
+
+/** Simulate a test transaction (normal, suspicious, or mule aggregator) */
+app.post("/api/transactions/simulate", (req, res) => {
+  const { from, to, amount, type, nodeType, status } = req.body ?? {};
+  const pseudoHash = "0x" + Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16)).join("");
+  const item: TransactionItem = {
+    id: `sim-${Date.now()}`,
+    txHash: pseudoHash,
+    from: from || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+    to: to || cfg.addresses.JobEscrow,
+    amount: amount || "10.0 ETH",
+    type: type || "transfer",
+    status: status || "confirmed",
+    gasUsed: "21,000 gas",
+    blockNumber: Math.floor(Math.random() * 100) + 1,
+    timestamp: "Just now",
+    timeMillis: Date.now(),
+    nodeType: nodeType || "normal",
+  };
+  recordAndEmitTx(item);
+  res.json({ ok: true, transaction: item });
+});
+
+// ---------------------------------------------------------------- job status
 app.get("/jobs", (_req, res) => {
   res.json(listJobs());
 });
@@ -50,7 +97,6 @@ app.get("/jobs/:jobId", (req, res) => {
 });
 
 // ---------------------------------------------------------------- MACHINE AGENT routes
-/** Member 4 (or a poller watching JobCreated) calls this to have the machine accept + start. */
 app.post("/machine/jobs/:jobId/accept", async (req, res) => {
   const jobId = req.params.jobId;
   try {
@@ -63,14 +109,6 @@ app.post("/machine/jobs/:jobId/accept", async (req, res) => {
   }
 });
 
-/**
- * Member 2's robot simulation calls this when the job is physically "done".
- * Body: { packageId, target: {zone,x,y}, finalPosition: {x,y}, delivered, result?: "success"|"fail" }
- *
- * This signs + submits the on-chain proof, then forwards proof+evidence to the
- * verifier itself (over HTTP, per the suggested contract in the hand-off doc —
- * point VERIFIER_URL at a different host/port to run them as two real services).
- */
 app.post("/machine/jobs/:jobId/evidence", async (req, res) => {
   const jobId = req.params.jobId;
   try {
@@ -109,7 +147,6 @@ app.post("/machine/jobs/:jobId/evidence", async (req, res) => {
 });
 
 // ---------------------------------------------------------------- VERIFIER routes
-/** Standalone endpoint: { jobId, proof, signature, evidence } -> { passed, checks, attestationTx, settleTx } */
 app.post("/verifier/verify", async (req, res) => {
   const body = req.body as VerifyRequest;
   try {
@@ -122,10 +159,23 @@ app.post("/verifier/verify", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Member 3 service (machine agent + verifier) listening on :${PORT}`);
+// Create HTTP and WebSocket server
+const server = createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on("connection", (ws, req) => {
+  console.log(`[ws] Client connected from ${req.socket.remoteAddress}`);
+  addWsClient(ws);
+});
+
+server.listen(PORT, () => {
+  console.log(`MachinaPay Backend service listening on :${PORT}`);
   console.log(`  machine wallet:  ${getMachineAddress()} (${MACHINE_ID_TEXT})`);
   console.log(`  verifier wallet: ${getVerifierAddress()}`);
+  console.log(`  HTTP API:        http://localhost:${PORT}`);
+  console.log(`  Transactions:    http://localhost:${PORT}/api/transactions`);
+  console.log(`  SSE stream:      http://localhost:${PORT}/api/transactions/stream`);
+  console.log(`  WebSocket:       ws://localhost:${PORT}/api/transactions/ws`);
   if (getVerifierAddress().toLowerCase() !== cfg.verifier.toLowerCase()) {
     const msg = `FATAL CONFIG MISMATCH: verifier address ${getVerifierAddress()} does not match JobEscrow verifier ${cfg.verifier}`;
     console.error(msg);
