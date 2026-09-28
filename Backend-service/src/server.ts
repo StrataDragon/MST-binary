@@ -288,6 +288,136 @@ app.post("/verifier/verify", async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------- CONSOLIDATED WORKFLOW ENDPOINTS (Section 2)
+app.post("/jobs/:jobId/execute", async (req, res) => {
+  const jobId = req.params.jobId;
+  const { machineId, taskType, simulateFailure, demoFail } = req.body ?? {};
+  try {
+    const escrow = getEscrow();
+    const onChainJob = await escrow.getJob(jobId);
+    const state = Number(onChainJob.state);
+    if (state === 0) {
+      return res.status(400).json({ error: "Job is not funded on-chain yet (state 0). Customer must fund escrow first." });
+    }
+
+    const assignedMachine = machineId || (taskType === "COLOR_SORTING" ? "M-051" : "M-042");
+
+    // 1. Accept & Start if in FUNDED state
+    if (state === 1) {
+      await acceptAndStart(jobId, assignedMachine);
+    }
+
+    // 2. Build evidence based on machine type and demo failure flag
+    const isFail = Boolean(simulateFailure || demoFail);
+    let evidenceResult: any;
+
+    if (assignedMachine === "M-051" || taskType === "COLOR_SORTING") {
+      // Color Sorting Arm demo: success = 97% accuracy, failure = 88% accuracy (vs 95% required)
+      const evidence = {
+        jobId,
+        machineId: "M-051",
+        taskType: "COLOR_SORTING",
+        objectsProcessed: 100,
+        correctlySorted: isFail ? 88 : 97,
+        incorrectlySorted: isFail ? 12 : 3,
+        colorDistribution: { red: 25, blue: 25, green: 25, yellow: 25 },
+        requiredAccuracy: 95,
+        actualAccuracy: isFail ? 88 : 97,
+        completedAt: new Date().toISOString(),
+      };
+      evidenceResult = await submitGenericEvidenceAndProof(
+        jobId,
+        evidence,
+        isFail ? "fail" : "success",
+        "M-051"
+      );
+    } else {
+      // Transport Robot M-042 demo
+      const evidence = {
+        jobId,
+        machineId: "M-042",
+        taskType: "PACKAGE_TRANSPORT",
+        pickupLocation: req.body?.pickupLocation || "Warehouse A",
+        destination: req.body?.destination || "Warehouse B",
+        packageId: req.body?.packageId || "PKG-042",
+        packageWeightKg: Number(req.body?.packageWeightKg || 5),
+        distanceKm: Number(req.body?.distanceKm || 5),
+        completedAt: new Date().toISOString(),
+        delivered: !isFail,
+      };
+      evidenceResult = await submitGenericEvidenceAndProof(
+        jobId,
+        evidence,
+        isFail ? "fail" : "success",
+        "M-042"
+      );
+    }
+
+    res.json({ ok: true, stage: "proof_submitted", jobId, evidenceResult });
+  } catch (e: any) {
+    const error = decodeError(e);
+    upsertJob(jobId, { stage: "error", error });
+    res.status(400).json({ error });
+  }
+});
+
+app.post("/jobs/:jobId/verify", async (req, res) => {
+  const jobId = req.params.jobId;
+  try {
+    const escrow = getEscrow();
+    const onChainJob = await escrow.getJob(jobId);
+    const state = Number(onChainJob.state);
+
+    if (state < 4) {
+      return res.status(400).json({ error: `Job is not ready for verification (state ${state} < 4). Proof must be submitted first.` });
+    }
+
+    const evidence = getEvidence(jobId) || req.body?.evidence;
+    const body: VerifyRequest = {
+      jobId,
+      proof: req.body?.proof,
+      signature: req.body?.signature,
+      evidence,
+    };
+
+    const result = await verifyAndSettle(body);
+    res.json(result);
+  } catch (e: any) {
+    const error = decodeError(e);
+    upsertJob(jobId, { stage: "error", error });
+    res.status(400).json({ error });
+  }
+});
+
+app.post("/jobs/:jobId/settle", async (req, res) => {
+  const jobId = req.params.jobId;
+  try {
+    const escrow = getEscrow();
+    const onChainJob = await escrow.getJob(jobId);
+    const state = Number(onChainJob.state);
+    const verdict = Number(onChainJob.verdict);
+
+    if (state === 5) {
+      // VERIFIED -> release payment to machine
+      const tx = await escrow.release(jobId);
+      const receipt = await tx.wait();
+      upsertJob(jobId, { stage: "paid", txs: { release: receipt.hash } });
+      return res.json({ ok: true, action: "release", txHash: receipt.hash });
+    } else if (state === 4 && verdict === 2) {
+      // PROOF_SUBMITTED with FAIL verdict -> refund customer
+      const tx = await escrow.refund(jobId);
+      const receipt = await tx.wait();
+      upsertJob(jobId, { stage: "refunded", txs: { refund: receipt.hash } });
+      return res.json({ ok: true, action: "refund", txHash: receipt.hash });
+    } else {
+      return res.status(400).json({ error: `Cannot settle job in state ${state} (verdict: ${verdict}).` });
+    }
+  } catch (e: any) {
+    const error = decodeError(e);
+    res.status(400).json({ error });
+  }
+});
+
 // Create HTTP and WebSocket server
 const server = createServer(app);
 const wss = new WebSocketServer({ server });

@@ -16,7 +16,7 @@ import {
   Copy,
   Check,
 } from "lucide-react";
-import { cfg, NATIVE_SYMBOL } from "../lib/config";
+import { cfg, NATIVE_SYMBOL, MEMBER3_API_URL } from "../lib/config";
 import { getReadProvider, getRegistry, getEscrow, decodeContractError } from "../lib/wallet";
 import { getMachineProfile, MachineProfile } from "../lib/machineProfiles";
 import { quoteTransport, quoteSorting, QuoteResult } from "../lib/pricing";
@@ -281,7 +281,7 @@ export function MarketplaceView({
       // Register off-chain metadata
       let metadataHash = keccak256(toUtf8Bytes(hireDescription));
       try {
-        const metaRes = await fetch("http://localhost:4000/api/jobs", {
+        const metaRes = await fetch(`${MEMBER3_API_URL}/api/jobs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

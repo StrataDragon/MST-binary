@@ -16,8 +16,15 @@ import {
   Maximize2,
   Filter,
 } from "lucide-react";
-import { cfg, NATIVE_SYMBOL } from "../lib/config";
+import { cfg, NATIVE_SYMBOL, MEMBER3_API_URL } from "../lib/config";
 import { getReadProvider, getEscrow, getRegistry, decodeContractError } from "../lib/wallet";
+
+function withTimeout<T>(promise: Promise<T>, ms = 12000, errorMsg = "RPC request timed out"): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms)),
+  ]);
+}
 
 interface WalletMapViewProps {
   signer: any;
@@ -88,6 +95,7 @@ export function WalletMapView({
   // Loading & error states
   const [loading, setLoading] = useState<boolean>(true);
   const [rpcError, setRpcError] = useState<string | null>(null);
+  const [showErrorDetails, setShowErrorDetails] = useState<boolean>(false);
 
   // Create Job Form inside Right Panel
   const [formDescription, setFormDescription] = useState("Autonomous transport package delivery");
@@ -112,19 +120,25 @@ export function WalletMapView({
     setRpcError(null);
     try {
       const provider = getReadProvider();
+      // Health check to ensure RPC is reachable
+      await withTimeout(provider.getBlockNumber(), 10000, "Can't reach RPC");
       const registry = getRegistry(provider);
       const escrow = getEscrow(provider);
 
-      // Fetch escrow & registry balances
+      // Fetch escrow & registry balances with timeout
       const [escrowBalRaw, registryBalRaw] = await Promise.all([
-        provider.getBalance(cfg.addresses.JobEscrow).catch(() => 0n),
-        provider.getBalance(cfg.addresses.MachineRegistry).catch(() => 0n),
+        withTimeout(provider.getBalance(cfg.addresses.JobEscrow), 10000, "Escrow balance timeout").catch(() => 0n),
+        withTimeout(provider.getBalance(cfg.addresses.MachineRegistry), 10000, "Registry balance timeout").catch(() => 0n),
       ]);
       const escrowBal = formatEther(escrowBalRaw);
       const registryBal = formatEther(registryBalRaw);
 
-      // Fetch registered machines from registry
-      const machineIdsBytes: string[] = await registry.getMachineIds().catch(() => []);
+      // Fetch registered machines from registry with timeout
+      const machineIdsBytes: string[] = await withTimeout(
+        registry.getMachineIds(),
+        10000,
+        "Machine IDs fetch timeout"
+      ).catch(() => []);
       const machineNodesList: MapNode[] = [];
 
       for (let i = 0; i < machineIdsBytes.length; i++) {
@@ -166,11 +180,11 @@ export function WalletMapView({
         });
       }
 
-      // Build Base Nodes
+      // Build Base Nodes (Customer always rendered; displays disconnected state if !clientAddress)
       const customerNode: MapNode = {
         id: "customer",
-        label: clientAddress ? "Customer Wallet" : "Customer (Disconnected)",
-        subLabel: clientAddress ? "Connected" : "No Wallet",
+        label: clientAddress ? "Customer Wallet" : "Customer (Not Connected)",
+        subLabel: clientAddress ? "Connected" : "Disconnected",
         kind: "customer",
         address: clientAddress || "0x0000000000000000000000000000000000000000",
         balance: clientBalance || "0.0000",
@@ -281,21 +295,41 @@ export function WalletMapView({
       setEdges(baseEdges);
 
       // 2. QueryFilter for past events once (N recent blocks)
-      const currentBlock = await provider.getBlockNumber().catch(() => 0);
-      const startBlock = Math.max(0, currentBlock - 5000);
+      const currentBlock = await withTimeout(provider.getBlockNumber(), 8000, "Get block timeout").catch(() => 0);
+      const startBlock = Math.max(0, currentBlock - 500);
 
-      const [escrowLogs, regLogs] = await Promise.all([
-        escrow.queryFilter("*", startBlock, currentBlock).catch(() => []),
-        registry.queryFilter("*", startBlock, currentBlock).catch(() => []),
+      const [
+        createdLogs,
+        acceptedLogs,
+        proofLogs,
+        verifiedLogs,
+        releasedLogs,
+        refundedLogs,
+        regLogs,
+      ] = await Promise.all([
+        escrow.queryFilter(escrow.filters.JobCreated(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.JobAccepted(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.ProofSubmitted(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.VerificationSubmitted(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.PaymentReleased(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.JobRefunded(), startBlock, currentBlock).catch(() => []),
+        registry.queryFilter(registry.filters.MachineRegistered(), startBlock, currentBlock).catch(() => []),
       ]);
 
       const parsedFeed: FeedEventItem[] = [];
-      const allLogs = [...escrowLogs, ...regLogs].sort((a, b) => b.blockNumber - a.blockNumber);
+      const allLogs = [
+        ...createdLogs,
+        ...acceptedLogs,
+        ...proofLogs,
+        ...verifiedLogs,
+        ...releasedLogs,
+        ...refundedLogs,
+        ...regLogs,
+      ].sort((a, b) => b.blockNumber - a.blockNumber);
 
       for (const log of allLogs) {
         const frag = (log as any).fragment;
-        if (!frag) continue;
-        const name = frag.name;
+        const name = frag?.name || "Event";
         const args = (log as any).args;
         let summary = name;
         let amt: string | undefined;
@@ -334,28 +368,34 @@ export function WalletMapView({
       }
 
       setEventsFeed(parsedFeed.slice(0, 20));
-      setLoading(false);
     } catch (err: any) {
       console.error("Error loading Wallet Map data:", err);
       setRpcError(err.message || String(err));
+    } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
+    let mounted = true;
     loadChainData();
+    return () => {
+      mounted = false;
+    };
   }, [clientAddress, clientBalance]);
 
   // 3. Event-Driven Real-time Updates (escrow.on / registry.on)
   useEffect(() => {
     let provider: any;
+    let escrow: any;
+    let registry: any;
     try {
       provider = getReadProvider();
+      escrow = getEscrow(provider);
+      registry = getRegistry(provider);
     } catch {
       return;
     }
-    const escrow = getEscrow(provider);
-    const registry = getRegistry(provider);
 
     function triggerEdgeHighlight(edgeId: string, amount?: string, txHash?: string) {
       setActiveEdgeId(edgeId);
@@ -535,7 +575,7 @@ export function WalletMapView({
       // Register metadata off-chain to Backend
       let metadataHash = keccak256(toUtf8Bytes(formDescription));
       try {
-        const metaRes = await fetch("http://localhost:4000/api/jobs", {
+        const metaRes = await fetch(`${MEMBER3_API_URL}/api/jobs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -686,18 +726,45 @@ export function WalletMapView({
 
           {/* SVG Canvas */}
           <div className="flex-1 relative flex items-center justify-center p-4">
-            {loading ? (
+            {loading && nodes.length === 0 ? (
               <div className="text-center space-y-2 py-24 text-gray-500 font-mono text-xs">
                 <div className="w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin mx-auto" />
                 <p>Loading real on-chain topology from {cfg.network}…</p>
               </div>
-            ) : !clientAddress ? (
-              <div className="text-center space-y-3 py-24 text-gray-400 font-mono text-xs">
-                <Wallet className="w-10 h-10 text-gray-600 mx-auto" />
-                <p className="text-sm font-semibold text-white">No Wallet Connected</p>
-                <p className="text-gray-500 max-w-sm mx-auto">
-                  Connect your Web3 wallet using the top navigation bar to render customer escrow topology.
-                </p>
+            ) : rpcError && nodes.length === 0 ? (
+              <div className="text-center space-y-4 py-16 text-gray-400 font-mono text-xs max-w-md mx-auto">
+                <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center mx-auto text-red-400">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-white">Can't reach {cfg.network} RPC</p>
+                  <p className="text-gray-400 mt-1">
+                    Unable to load topology. Verify network connection or ensure contracts are deployed (run npm run deploy:mst).
+                  </p>
+                </div>
+                <div className="flex justify-center gap-3">
+                  <button
+                    onClick={() => loadChainData()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded text-xs font-medium transition cursor-pointer"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" /> Retry
+                  </button>
+                  <button
+                    onClick={() => setShowErrorDetails(!showErrorDetails)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-xs transition cursor-pointer"
+                  >
+                    Technical Details {showErrorDetails ? "▲" : "▼"}
+                  </button>
+                </div>
+                {showErrorDetails && (
+                  <div className="text-left bg-gray-950 p-3 rounded border border-gray-800 text-[11px] text-gray-400 space-y-1">
+                    <div><span className="text-gray-500">RPC URL:</span> {cfg.rpcUrl}</div>
+                    <div><span className="text-gray-500">Chain ID:</span> {cfg.chainId}</div>
+                    <div><span className="text-gray-500">JobEscrow:</span> {cfg.addresses.JobEscrow}</div>
+                    <div><span className="text-gray-500">MachineRegistry:</span> {cfg.addresses.MachineRegistry}</div>
+                    <div className="text-red-400 break-all"><span className="text-gray-500">Error:</span> {rpcError}</div>
+                  </div>
+                )}
               </div>
             ) : (
               <svg

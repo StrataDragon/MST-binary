@@ -66,17 +66,29 @@ async function main() {
   }
 
   // Register machine M-051 (Robotic Pick-and-Place Color Sorting Arm)
-  const machine051IdStr = "M-051";
+  const machine051IdStr = process.env.MACHINE_051_ID || "M-051";
   const machine051Bytes32 = hre.ethers.encodeBytes32String(machine051IdStr);
-  const machine051Key = process.env.MACHINE_051_PRIVATE_KEY || "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
-  const machine051Wallet = new hre.ethers.Wallet(machine051Key).address;
+  let machine051Wallet = process.env.MACHINE_051_WALLET_ADDRESS;
+  if (!machine051Wallet && process.env.MACHINE_051_PRIVATE_KEY && /^0x[0-9a-fA-F]{64}$/.test(process.env.MACHINE_051_PRIVATE_KEY)) {
+    machine051Wallet = new hre.ethers.Wallet(process.env.MACHINE_051_PRIVATE_KEY).address;
+  }
+  if (!machine051Wallet) {
+    if (hre.network.name === "localhost" || hre.network.name === "hardhat") {
+      machine051Wallet = signers[4]?.address || machineWallet;
+    } else {
+      // Documented reuse of machineWallet if separate M-051 wallet is not provided in env
+      machine051Wallet = machineWallet;
+    }
+  }
+  const machine051Signer = process.env.MACHINE_051_SIGNER_ADDRESS || machine051Wallet;
+
   const is051Registered = await registry.isRegistered(machine051Bytes32);
   let reg051TxHash = "";
   if (!is051Registered) {
     const reg051Tx = await registry.registerMachine(
       machine051Bytes32,
       machine051Wallet,
-      machine051Wallet,
+      machine051Signer,
       { value: hre.ethers.parseEther(stakeEther) }
     );
     const reg051Receipt = await reg051Tx.wait();
@@ -110,21 +122,38 @@ async function main() {
     }
   }
 
-  // Create demo job
-  const description = process.env.DEMO_JOB_DESCRIPTION || "Move package A to green zone";
-  const jobId = hre.ethers.keccak256(
-    hre.ethers.toUtf8Bytes(`demo-job-${Date.now()}-${Math.random()}`)
-  );
-  const metadataHash = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(description));
-  const duration = Number(process.env.JOB_DURATION_SECONDS || 3600);
-  const rewardEther = process.env.JOB_REWARD || "100";
-  const reward = hre.ethers.parseEther(rewardEther);
+  // Create demo job (opt-in only via --create-job flag or CREATE_DEMO_JOB=true)
+  const shouldCreateJob = process.argv.includes("--create-job") || process.env.CREATE_DEMO_JOB === "true";
+  let createJobTxHash = "";
+  let createdJobInfo: any = null;
 
-  const createTx = await escrow.createJob(jobId, metadataHash, duration, description, {
-    value: reward,
-  });
-  const createReceipt = await createTx.wait();
-  console.log(`Created demo job ${jobId} (reward: ${rewardEther}) (tx: ${createReceipt?.hash || createTx.hash})`);
+  if (shouldCreateJob) {
+    const description = process.env.DEMO_JOB_DESCRIPTION || "Move package A to green zone";
+    const jobId = hre.ethers.keccak256(
+      hre.ethers.toUtf8Bytes(`demo-job-${Date.now()}-${Math.random()}`)
+    );
+    const metadataHash = hre.ethers.keccak256(hre.ethers.toUtf8Bytes(description));
+    const duration = Number(process.env.JOB_DURATION_SECONDS || 3600);
+    const rewardEther = process.env.JOB_REWARD || "2.2";
+    const reward = hre.ethers.parseEther(rewardEther);
+
+    const createTx = await escrow.createJob(jobId, metadataHash, duration, description, {
+      value: reward,
+    });
+    const createReceipt = await createTx.wait();
+    createJobTxHash = createReceipt?.hash || createTx.hash;
+    console.log(`Created demo job ${jobId} (reward: ${rewardEther}) (tx: ${createJobTxHash})`);
+    createdJobInfo = {
+      jobId,
+      description,
+      metadataHash,
+      reward: reward.toString(),
+      deadline: (Math.floor(Date.now() / 1000) + duration).toString(),
+      customer: customer.address,
+    };
+  } else {
+    console.log("Skipping demo job creation by default (pass --create-job to create one).");
+  }
 
   const demoData = {
     network: hre.network.name,
@@ -137,19 +166,13 @@ async function main() {
       machineId: machine051IdStr,
       machineIdBytes32: machine051Bytes32,
       machineWallet: machine051Wallet,
+      machineSigner: machine051Signer,
     },
-    job: {
-      jobId,
-      description,
-      metadataHash,
-      reward: reward.toString(),
-      deadline: (Math.floor(Date.now() / 1000) + duration).toString(),
-      customer: customer.address,
-    },
+    job: createdJobInfo,
     transactions: {
       registerMachine: regTxHash,
       registerMachine051: reg051TxHash,
-      createJob: createReceipt?.hash || createTx.hash,
+      createJob: createJobTxHash || undefined,
     },
     note: "Public info only. No private keys.",
   };

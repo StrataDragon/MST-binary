@@ -623,7 +623,7 @@ export function TransactionLabView({
           </div>
 
           <div className="pt-3 border-t border-gray-800 flex items-center justify-between text-[10px] text-gray-500">
-            <span>Network: MST Localnet (31337)</span>
+            <span>Network: {cfg.network} ({cfg.chainId})</span>
             <span>Sequential Execution Engine: Active</span>
           </div>
         </div>

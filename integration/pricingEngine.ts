@@ -261,3 +261,186 @@ export function calculateJobPrice(
     destination: params.destination ?? "Warehouse B",
   });
 }
+
+export interface ScaledLineItem {
+  label: string;
+  units: number;
+  costMst: string;
+}
+
+export interface ScaledQuote {
+  quoteId: string;
+  jobType: JobType;
+  params: Record<string, any>;
+  lineItems: ScaledLineItem[];
+  totalUnits: number;
+  totalMst: string;
+  totalWei: bigint;
+  lockedAt: string;
+}
+
+export const DEFAULT_PRICE_SCALE = 0.1;
+
+/**
+ * Scaled Reference Transport Quote (Section 6 benchmark: 10 + 4 + 2 + 3 + 1 + 2 = 22 units -> 2.2 MSTC at scale 0.1)
+ */
+export function calculateScaledTransportQuote(
+  params: {
+    distanceKm?: number;
+    weightKg?: number;
+    urgency?: UrgencyLevel;
+    demandUnits?: number;
+    availabilityUnits?: number;
+  } = {},
+  scale: number = DEFAULT_PRICE_SCALE
+): ScaledQuote {
+  const baseUnits = 10;
+  const distanceKm = params.distanceKm !== undefined ? params.distanceKm : 2;
+  const distanceUnits = Math.round(distanceKm * 2);
+  const weightKg = params.weightKg !== undefined ? params.weightKg : 2;
+  const weightUnits = Math.round(weightKg * 1);
+  const urgency = params.urgency || "URGENT";
+  const urgencyUnits = urgency === "URGENT" ? 3 : urgency === "PRIORITY" ? 2 : 0;
+  const demandUnits = params.demandUnits !== undefined ? params.demandUnits : 1;
+  const availabilityUnits = params.availabilityUnits !== undefined ? params.availabilityUnits : 2;
+
+  const totalUnits = baseUnits + distanceUnits + weightUnits + urgencyUnits + demandUnits + availabilityUnits;
+  const totalMstNum = totalUnits * scale;
+  const totalMst = (Math.round(totalMstNum * 100) / 100).toFixed(2);
+  const totalWei = BigInt(Math.round(totalUnits * scale * 1e4)) * 10n ** 14n;
+
+  const lineItems: ScaledLineItem[] = [
+    { label: "Base Mobilization", units: baseUnits, costMst: (baseUnits * scale).toFixed(2) },
+    { label: `Distance (${distanceKm} km)`, units: distanceUnits, costMst: (distanceUnits * scale).toFixed(2) },
+    { label: `Payload Weight (${weightKg} kg)`, units: weightUnits, costMst: (weightUnits * scale).toFixed(2) },
+    { label: `Urgency (${urgency})`, units: urgencyUnits, costMst: (urgencyUnits * scale).toFixed(2) },
+    { label: "Market Demand", units: demandUnits, costMst: (demandUnits * scale).toFixed(2) },
+    { label: "Fleet Availability", units: availabilityUnits, costMst: (availabilityUnits * scale).toFixed(2) },
+  ];
+
+  return Object.freeze({
+    quoteId: `quote-transport-${Date.now()}`,
+    jobType: "PACKAGE_TRANSPORT",
+    params: { distanceKm, weightKg, urgency, demandUnits, availabilityUnits, scale },
+    lineItems,
+    totalUnits,
+    totalMst,
+    totalWei,
+    lockedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Scaled Reference Sorting Quote (Section 6 benchmark: 20 + 8 + 4 + 1 + 0 + 1 + 1 = 35 units -> 3.5 MSTC at scale 0.1)
+ */
+export function calculateScaledSortingQuote(
+  params: {
+    objectCount?: number;
+    colorCount?: number;
+    accuracyPercent?: number;
+    urgency?: UrgencyLevel;
+    demandUnits?: number;
+    availabilityUnits?: number;
+  } = {},
+  scale: number = DEFAULT_PRICE_SCALE
+): ScaledQuote {
+  const baseUnits = 20;
+  const objectCount = params.objectCount !== undefined ? params.objectCount : 100;
+  const objectUnits = 8;
+  const colorCount = params.colorCount !== undefined ? params.colorCount : 4;
+  const colorUnits = 4;
+  const accuracyPercent = params.accuracyPercent !== undefined ? params.accuracyPercent : 95;
+  const accuracyUnits = accuracyPercent >= 95 ? 1 : 0;
+  const urgency = params.urgency || "STANDARD";
+  const urgencyUnits = urgency === "URGENT" ? 3 : urgency === "PRIORITY" ? 1 : 0;
+  const demandUnits = params.demandUnits !== undefined ? params.demandUnits : 1;
+  const availabilityUnits = params.availabilityUnits !== undefined ? params.availabilityUnits : 1;
+
+  const totalUnits = baseUnits + objectUnits + colorUnits + accuracyUnits + urgencyUnits + demandUnits + availabilityUnits;
+  const totalMstNum = totalUnits * scale;
+  const totalMst = (Math.round(totalMstNum * 100) / 100).toFixed(2);
+  const totalWei = BigInt(Math.round(totalUnits * scale * 1e4)) * 10n ** 14n;
+
+  const lineItems: ScaledLineItem[] = [
+    { label: "Base Optical Setup", units: baseUnits, costMst: (baseUnits * scale).toFixed(2) },
+    { label: `Object Count (${objectCount})`, units: objectUnits, costMst: (objectUnits * scale).toFixed(2) },
+    { label: `Color Complexity (${colorCount} colors)`, units: colorUnits, costMst: (colorUnits * scale).toFixed(2) },
+    { label: `Required Accuracy (${accuracyPercent}%)`, units: accuracyUnits, costMst: (accuracyUnits * scale).toFixed(2) },
+    { label: `Urgency (${urgency})`, units: urgencyUnits, costMst: (urgencyUnits * scale).toFixed(2) },
+    { label: "Queue Demand", units: demandUnits, costMst: (demandUnits * scale).toFixed(2) },
+    { label: "Arm Availability", units: availabilityUnits, costMst: (availabilityUnits * scale).toFixed(2) },
+  ];
+
+  return Object.freeze({
+    quoteId: `quote-sorting-${Date.now()}`,
+    jobType: "COLOR_SORTING",
+    params: { objectCount, colorCount, accuracyPercent, urgency, demandUnits, availabilityUnits, scale },
+    lineItems,
+    totalUnits,
+    totalMst,
+    totalWei,
+    lockedAt: new Date().toISOString(),
+  });
+}
+
+/**
+ * Natural language request parser for the demo:
+ * "Sort 100 objects by color" -> COLOR_SORTING
+ * "Transport a 5kg package from Warehouse A to Warehouse B urgently" -> PACKAGE_TRANSPORT
+ */
+export function parseNaturalLanguageJobRequest(prompt: string): {
+  jobType: JobType;
+  params: Record<string, any>;
+} | null {
+  const text = prompt.toLowerCase();
+  if (text.includes("sort") || text.includes("color") || text.includes("pick-and-place")) {
+    const objMatch = text.match(/(\d+)\s*(?:objects|items|pieces|units)/i);
+    const objectCount = objMatch ? parseInt(objMatch[1], 10) : 100;
+    const colorMatch = text.match(/(\d+)\s*colors?/i);
+    const colorCount = colorMatch ? parseInt(colorMatch[1], 10) : 4;
+    const accuracyMatch = text.match(/(\d+)%\s*(?:accuracy|sla)?/i);
+    const requiredAccuracyPercent = accuracyMatch ? parseInt(accuracyMatch[1], 10) : 95;
+    const isUrgent = text.includes("urgent") || text.includes("urgently");
+
+    return {
+      jobType: "COLOR_SORTING",
+      params: {
+        objectCount,
+        colorCount,
+        requiredAccuracyPercent,
+        urgency: isUrgent ? "URGENT" : "STANDARD",
+      },
+    };
+  }
+
+  if (text.includes("transport") || text.includes("package") || text.includes("move") || text.includes("delivery")) {
+    const weightMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:kg|kilo|kilograms)/i);
+    const weightKg = weightMatch ? parseFloat(weightMatch[1]) : 5;
+    const distMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:km|kilometers|miles)/i);
+    const distanceKm = distMatch ? parseFloat(distMatch[1]) : 5;
+    const isUrgent = text.includes("urgent") || text.includes("urgently");
+    const isPriority = text.includes("priority");
+
+    let pickupLocation = "Warehouse A";
+    let destination = "Warehouse B";
+    const fromToMatch = prompt.match(/from\s+([A-Za-z0-9\s]+?)\s+to\s+([A-Za-z0-9\s]+?)(?:\s+urgently|\s+fast|$)/i);
+    if (fromToMatch) {
+      pickupLocation = fromToMatch[1].trim();
+      destination = fromToMatch[2].trim();
+    }
+
+    return {
+      jobType: "PACKAGE_TRANSPORT",
+      params: {
+        weightKg,
+        distanceKm,
+        urgency: isUrgent ? "URGENT" : isPriority ? "PRIORITY" : "STANDARD",
+        pickupLocation,
+        destination,
+      },
+    };
+  }
+
+  return null;
+}
+

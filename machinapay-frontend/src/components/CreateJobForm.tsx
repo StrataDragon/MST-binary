@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { keccak256, parseEther, toUtf8Bytes } from "ethers";
 import { getEscrow, decodeContractError } from "../lib/wallet";
-import { DEFAULT_JOB_CONFIG } from "../lib/config";
+import { DEFAULT_JOB_CONFIG, MEMBER3_API_URL } from "../lib/config";
 
 export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (jobId: string) => void }) {
   const [description, setDescription] = useState(DEFAULT_JOB_CONFIG.description);
@@ -22,7 +22,7 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
       // Call backend to canonicalize & store off-chain metadata, returning keccak256 hash
       let metadataHash = keccak256(toUtf8Bytes(description));
       try {
-        const backendUrl = (import.meta as any).env?.VITE_BACKEND_URL || "http://localhost:4000";
+        const backendUrl = MEMBER3_API_URL;
         const metaRes = await fetch(`${backendUrl}/api/jobs`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },

@@ -20,7 +20,7 @@ import {
   ChevronDown,
   Sparkles,
 } from "lucide-react";
-import { cfg, DEFAULT_EVIDENCE_TARGET } from "../lib/config";
+import { cfg, DEFAULT_EVIDENCE_TARGET, MEMBER3_API_URL } from "../lib/config";
 import { machineApi } from "../lib/api";
 import { getEscrow, decodeContractError } from "../lib/wallet";
 import { JobSummary, statusLabel } from "./JobList";
@@ -229,7 +229,7 @@ export function TransactionFlowGraph({
       eip712Type: "Attestation",
       caller: cfg.verifier,
       payloadSnippet: {
-        verifierEndpoint: "http://localhost:4000",
+        verifierEndpoint: MEMBER3_API_URL,
         ruleCheck: state >= 4 ? (verdict === 2 ? "DISTANCE_EXCEEDED" : "COORDINATES_MATCHED") : "WAITING",
         verifierAddress: cfg.verifier,
         countersignature: state >= 4 ? "0x885b872b6cb3...fdd24d40c3 (65 bytes)" : "Pending",

@@ -3,6 +3,9 @@ import {
   calculateJobPrice,
   calculateTransportPrice,
   calculateColorSortingPrice,
+  calculateScaledTransportQuote,
+  calculateScaledSortingQuote,
+  parseNaturalLanguageJobRequest,
 } from "../integration/pricingEngine";
 
 describe("Platform-Level Dynamic Pricing Engine", () => {
@@ -104,5 +107,55 @@ describe("Platform-Level Dynamic Pricing Engine", () => {
     // New quote goes up, but locked price remains untouched
     expect(Number(marketSurgeQuote.lockedPriceMst)).to.be.greaterThan(Number(lockedPrice));
     expect(lockedPrice).to.equal("34.00");
+  });
+
+  describe("Section 6 Scaled Reference Benchmarks (Faucet Sizing)", () => {
+    it("calculates Scaled Transport quote matching Section 6 reference (22 units -> 2.2 MSTC)", () => {
+      // 10 + 4 + 2 + 3 + 1 + 2 = 22 units
+      const quote = calculateScaledTransportQuote({
+        distanceKm: 2,
+        weightKg: 2,
+        urgency: "URGENT",
+        demandUnits: 1,
+        availabilityUnits: 2,
+      }, 0.1);
+
+      expect(quote.totalUnits).to.equal(22);
+      expect(quote.totalMst).to.equal("2.20");
+      expect(quote.totalWei).to.equal(2200000000000000000n); // 2.2 ether in wei
+      expect(Object.isFrozen(quote)).to.be.true;
+    });
+
+    it("calculates Scaled Sorting quote matching Section 6 reference (35 units -> 3.5 MSTC)", () => {
+      // 20 + 8 + 4 + 1 + 0 + 1 + 1 = 35 units
+      const quote = calculateScaledSortingQuote({
+        objectCount: 100,
+        colorCount: 4,
+        accuracyPercent: 95,
+        urgency: "STANDARD",
+        demandUnits: 1,
+        availabilityUnits: 1,
+      }, 0.1);
+
+      expect(quote.totalUnits).to.equal(35);
+      expect(quote.totalMst).to.equal("3.50");
+      expect(quote.totalWei).to.equal(3500000000000000000n); // 3.5 ether in wei
+      expect(Object.isFrozen(quote)).to.be.true;
+    });
+
+    it("parses natural language requests deterministically into structured params", () => {
+      const sortingReq = parseNaturalLanguageJobRequest("Sort 100 objects by color");
+      expect(sortingReq).to.not.be.null;
+      expect(sortingReq?.jobType).to.equal("COLOR_SORTING");
+      expect(sortingReq?.params.objectCount).to.equal(100);
+
+      const transportReq = parseNaturalLanguageJobRequest("Transport a 5kg package from Warehouse A to Warehouse B urgently");
+      expect(transportReq).to.not.be.null;
+      expect(transportReq?.jobType).to.equal("PACKAGE_TRANSPORT");
+      expect(transportReq?.params.weightKg).to.equal(5);
+      expect(transportReq?.params.urgency).to.equal("URGENT");
+      expect(transportReq?.params.pickupLocation).to.equal("Warehouse A");
+      expect(transportReq?.params.destination).to.equal("Warehouse B");
+    });
   });
 });

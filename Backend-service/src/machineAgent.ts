@@ -24,8 +24,7 @@ const machineWallet042 = new Wallet(requireEnv("MACHINE_PRIVATE_KEY"), provider)
 
 // Machine M-051 (Robotic Pick-and-Place Arm)
 const machine051Key =
-  process.env.MACHINE_051_PRIVATE_KEY ||
-  "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
+  process.env.MACHINE_051_PRIVATE_KEY || requireEnv("MACHINE_PRIVATE_KEY");
 const machineWallet051 = new Wallet(machine051Key, provider);
 
 export function getMachineWallet(machineIdText?: string): Wallet {

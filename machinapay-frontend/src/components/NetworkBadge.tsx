@@ -14,30 +14,21 @@ interface NetworkOption {
 
 const SUPPORTED_NETWORKS: NetworkOption[] = [
   {
-    chainId: cfg.chainId,
-    hexChainId: "0x" + cfg.chainId.toString(16),
-    name: `${cfg.network} (Active Deployment)`,
-    rpcUrl: cfg.rpcUrl,
-    nativeToken: cfg.nativeToken,
-    explorerUrl: cfg.explorerUrl || undefined,
-    isCurrentAppTarget: true,
+    chainId: 91562037,
+    hexChainId: "0x5752035",
+    name: "MST Testnet",
+    rpcUrl: "https://testnetrpc.mstblockchain.com",
+    nativeToken: "tMSTC",
+    explorerUrl: "https://testnet.mstscan.com",
+    isCurrentAppTarget: cfg.chainId === 91562037,
   },
   {
     chainId: 31337,
     hexChainId: "0x7a69",
     name: "Hardhat Localnet (Port 8545)",
     rpcUrl: "http://127.0.0.1:8545",
-    nativeToken: "ETH",
+    nativeToken: "MSTC",
     isCurrentAppTarget: cfg.chainId === 31337,
-  },
-  {
-    chainId: 11155111,
-    hexChainId: "0xaa36a7",
-    name: "Ethereum Sepolia Testnet",
-    rpcUrl: "https://rpc.sepolia.org",
-    nativeToken: "ETH",
-    explorerUrl: "https://sepolia.etherscan.io",
-    isCurrentAppTarget: cfg.chainId === 11155111,
   },
 ];
 
