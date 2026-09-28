@@ -59,7 +59,22 @@ if not exist "machinapay-frontend\node_modules" (
     cd ..
 )
 
+if exist "machinapay-simulator" (
+    if not exist "machinapay-simulator\node_modules" (
+        echo [INFO] Installing Simulator dependencies...
+        cd machinapay-simulator
+        call npm.cmd install
+        if !ERRORLEVEL! neq 0 (
+            echo [ERROR] Failed to install simulator dependencies.
+            cd ..
+            exit /b 1
+        )
+        cd ..
+    )
+)
+
 REM 3. Confirm .env files exist
+
 if not exist ".env" (
     echo [INFO] Creating root .env from .env.example...
     copy ".env.example" ".env" >nul
@@ -84,7 +99,14 @@ if not exist "machinapay-frontend\.env" (
     )
 )
 
+if not exist "machinapay-simulator\.env" (
+    if exist "machinapay-simulator\.env.example" (
+        copy "machinapay-simulator\.env.example" "machinapay-simulator\.env" >nul
+    )
+)
+
 REM 4. Compile smart contracts
+
 echo.
 echo [2/6] Compiling smart contracts...
 call npx.cmd hardhat compile
@@ -189,15 +211,31 @@ if %ERRORLEVEL% equ 0 (
     echo [SUCCESS] Frontend is ready!
 )
 
+REM 9. Start 3D Simulator in new window if available
+if exist "machinapay-simulator" (
+    echo.
+    echo [BONUS] Checking 3D Robot Simulator...
+    netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
+    if %ERRORLEVEL% equ 0 (
+        echo [INFO] 3D Robot Simulator is already running on port 5174.
+    ) else (
+        echo [INFO] Spawning 3D Robot Simulator in a new window...
+        start "MachinaPay 3D Robot Simulator" cmd /k "cd /d "%~dp0machinapay-simulator" && npm.cmd run dev"
+        echo [SUCCESS] 3D Robot Simulator spawned on port 5174!
+    )
+)
+
 echo.
 echo ======================================================================
 echo                     MachinaPay Demo is RUNNING!
 echo ======================================================================
 echo   - Frontend UI:          http://localhost:5173
+echo   - 3D Robot Simulator:   http://localhost:5174
 echo   - Backend Service:      http://localhost:4000/health
 echo   - Hardhat Local Node:   http://127.0.0.1:8545
 echo.
-echo   To stop all services, run stop.bat or close the 3 command windows.
+echo   To stop all services, run stop.bat or close the command windows.
 echo ======================================================================
 echo.
 exit /b 0
+
