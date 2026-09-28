@@ -96,24 +96,51 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
   const machineActive = Boolean(machine.active);
   const rightJob = req.evidence.jobId === req.jobId;
   const rightMachine = req.evidence.machineId === machineIdToString(job.machineId);
-  const targetX = (req.evidence as any).targetPosition?.x ?? req.evidence.target?.x;
-  const targetY = (req.evidence as any).targetPosition?.y ?? req.evidence.target?.y;
-  const atTarget =
-    req.evidence.finalPosition?.x === targetX &&
-    req.evidence.finalPosition?.y === targetY;
-  const delivered =
-    (req.evidence as any).objectDelivered === true || req.evidence.delivered === true;
   const machineReportedSuccess = req.proof.result === 1;
+  const isColorSorting =
+    req.evidence?.taskType === "COLOR_SORTING" || req.evidence?.objectsProcessed !== undefined;
+  const isTransport =
+    req.evidence?.taskType === "PACKAGE_TRANSPORT" || req.evidence?.pickupLocation !== undefined;
 
+  let betaPassed = false;
+  let betaReason = "";
+  let betaChecks: Record<string, boolean> = {};
+  let atTarget = true;
+  let delivered = true;
+
+  if (isColorSorting) {
+    const objectsProcessed = Number(req.evidence.objectsProcessed) || 0;
+    const requiredAccuracy = Number(req.evidence.requiredAccuracy) || 95;
+    const actualAccuracy = Number(req.evidence.actualAccuracy) || 0;
+    const accuracyMet = actualAccuracy >= requiredAccuracy;
+    const countValid = objectsProcessed > 0;
+    atTarget = accuracyMet;
+    delivered = countValid;
+    betaChecks = { accuracyMet, countValid, machineReportedSuccess };
+    betaPassed = accuracyMet && countValid && machineReportedSuccess;
+    betaReason = betaPassed
+      ? `Color arm telemetry verified: ${req.evidence.correctlySorted || objectsProcessed}/${objectsProcessed} sorted (${actualAccuracy}% accuracy >= ${requiredAccuracy}% required)`
+      : `Color arm verification failed: accuracy ${actualAccuracy}% is below required ${requiredAccuracy}%`;
+  } else {
+    const targetX = (req.evidence as any).targetPosition?.x ?? req.evidence.target?.x;
+    const targetY = (req.evidence as any).targetPosition?.y ?? req.evidence.target?.y;
+    atTarget =
+      req.evidence.finalPosition?.x !== undefined
+        ? req.evidence.finalPosition?.x === targetX && req.evidence.finalPosition?.y === targetY
+        : true;
+    delivered =
+      (req.evidence as any).objectDelivered === true || req.evidence.delivered === true;
+    betaChecks = { delivered, atTarget, machineReportedSuccess };
+    betaPassed = delivered && atTarget && machineReportedSuccess;
+    betaReason = betaPassed
+      ? `Package delivered at destination (${req.evidence.destination || "Warehouse B"})`
+      : "Delivery incomplete or coordinates mismatch";
+  }
 
   // 2. Multi-verifier simulation voting
   // Verifier Alpha: Cryptography & Hashes
   const alphaChecks = { proofSignatureValid, evidenceMatchesChainHash };
   const alphaPassed = proofSignatureValid && evidenceMatchesChainHash;
-
-  // Verifier Beta: Physical delivery & Sensor telemetry
-  const betaChecks = { delivered, atTarget, machineReportedSuccess };
-  const betaPassed = delivered && atTarget && machineReportedSuccess;
 
   // Verifier Gamma: Compliance, Machine Identity & Authority
   const gammaChecks = { machineActive, rightJob, rightMachine };
@@ -125,15 +152,19 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
       role: "Cryptographic Attestation & EIP-712 Engine",
       vote: alphaPassed ? "PASS" : "FAIL",
       passed: alphaPassed,
-      reason: alphaPassed ? "Signature valid against registered machine signer" : "Signature or evidence hash mismatch",
+      reason: alphaPassed
+        ? "Signature valid against registered machine signer"
+        : "Signature or evidence hash mismatch",
       checks: alphaChecks,
     },
     {
       name: "Verifier Beta",
-      role: "Autonomous Sensor & Trajectory Telemetry",
+      role: isColorSorting
+        ? "Color Sensor & Accuracy Telemetry Engine"
+        : "Autonomous Transport & Trajectory Telemetry",
       vote: betaPassed ? "PASS" : "FAIL",
       passed: betaPassed,
-      reason: betaPassed ? "Package delivered precisely at target drop zone" : "Drop location outside coordinates or task failed",
+      reason: betaReason,
       checks: betaChecks,
     },
     {
@@ -141,7 +172,9 @@ export async function verifyAndSettle(req: VerifyRequest): Promise<VerifyResult>
       role: "Registry Policy & Active Collateral Compliance",
       vote: gammaPassed ? "PASS" : "FAIL",
       passed: gammaPassed,
-      reason: gammaPassed ? "Machine active, stake confirmed, authorized operator" : "Machine inactive or unauthorized caller",
+      reason: gammaPassed
+        ? `Machine ${machineIdToString(job.machineId)} active, stake confirmed, authorized operator`
+        : "Machine inactive or unauthorized caller",
       checks: gammaChecks,
     },
   ];

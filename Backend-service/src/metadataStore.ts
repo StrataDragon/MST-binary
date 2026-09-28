@@ -8,7 +8,13 @@ export interface Position {
   y: number;
 }
 
-export type TaskType = "MOVE_OBJECT" | "PICK_AND_PLACE" | "LOAD_AND_DUMP" | "DELIVERY";
+export type TaskType =
+  | "MOVE_OBJECT"
+  | "PICK_AND_PLACE"
+  | "LOAD_AND_DUMP"
+  | "DELIVERY"
+  | "PACKAGE_TRANSPORT"
+  | "COLOR_SORTING";
 
 export interface JobMetadataInput {
   taskType?: TaskType;
@@ -16,6 +22,15 @@ export interface JobMetadataInput {
   target?: Position;
   simulateFailure?: boolean;
   description?: string;
+  machineId?: string;
+  pickupLocation?: string;
+  destination?: string;
+  distanceKm?: number;
+  packageWeightKg?: number;
+  objectCount?: number;
+  colors?: string[];
+  requiredAccuracyPercent?: number;
+  pricing?: any;
 }
 
 export interface JobMetadata {
@@ -24,6 +39,15 @@ export interface JobMetadata {
   target: Position;
   simulateFailure?: boolean;
   description?: string;
+  machineId?: string;
+  pickupLocation?: string;
+  destination?: string;
+  distanceKm?: number;
+  packageWeightKg?: number;
+  objectCount?: number;
+  colors?: string[];
+  requiredAccuracyPercent?: number;
+  pricing?: any;
 }
 
 const DATA_DIR = path.join(__dirname, "..", "data");
@@ -95,6 +119,27 @@ const DEFAULT_TASKS: Record<string, JobMetadata> = {
     target: { x: 640, y: 220 },
     description: "Express delivery to warehouse D",
   },
+  PACKAGE_TRANSPORT: {
+    taskType: "PACKAGE_TRANSPORT",
+    source: { x: 100, y: 300 },
+    target: { x: 600, y: 300 },
+    description: "Move package from Warehouse A to Warehouse B",
+    machineId: "M-042",
+    pickupLocation: "Warehouse A",
+    destination: "Warehouse B",
+    distanceKm: 5,
+    packageWeightKg: 10,
+  },
+  COLOR_SORTING: {
+    taskType: "COLOR_SORTING",
+    source: { x: 150, y: 150 },
+    target: { x: 550, y: 450 },
+    description: "Sort 100 objects into 4 colors with 95% accuracy",
+    machineId: "M-051",
+    objectCount: 100,
+    colors: ["RED", "BLUE", "GREEN", "YELLOW"],
+    requiredAccuracyPercent: 95,
+  },
 };
 
 // Seed description-based metadata hashes (e.g. keccak256(utf8(description)))
@@ -132,6 +177,15 @@ export function storeMetadata(input: JobMetadataInput): {
     target: input.target || defaultTask.target,
     simulateFailure: Boolean(input.simulateFailure),
     description: input.description || defaultTask.description,
+    machineId: input.machineId || defaultTask.machineId,
+    pickupLocation: input.pickupLocation || defaultTask.pickupLocation,
+    destination: input.destination || defaultTask.destination,
+    distanceKm: input.distanceKm ?? defaultTask.distanceKm,
+    packageWeightKg: input.packageWeightKg ?? defaultTask.packageWeightKg,
+    objectCount: input.objectCount ?? defaultTask.objectCount,
+    colors: input.colors || defaultTask.colors,
+    requiredAccuracyPercent: input.requiredAccuracyPercent ?? defaultTask.requiredAccuracyPercent,
+    pricing: input.pricing,
   };
 
   const { hash, canonicalStr } = computeMetadataHash(metadata);

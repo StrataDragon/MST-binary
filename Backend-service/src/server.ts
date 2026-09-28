@@ -4,7 +4,13 @@ import express from "express";
 import cors from "cors";
 import { WebSocketServer } from "ws";
 import { cfg, getEscrow } from "./config";
-import { acceptAndStart, submitEvidenceAndProof, getMachineAddress, MACHINE_ID_TEXT } from "./machineAgent";
+import {
+  acceptAndStart,
+  submitEvidenceAndProof,
+  submitGenericEvidenceAndProof,
+  getMachineAddress,
+  MACHINE_ID_TEXT,
+} from "./machineAgent";
 import { verifyAndSettle, getVerifierAddress, VerifyRequest } from "./verifierService";
 import { getJob, listJobs, upsertJob } from "./store";
 import { startChainListener } from "./chainListener";
@@ -12,6 +18,7 @@ import { storeMetadata, getMetadataByHash } from "./metadataStore";
 import { getEvidence, listAllEvidence } from "./evidenceStore";
 import { handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
 import { getTransactions, addSseClient, addWsClient, recordAndEmitTx, TransactionItem } from "./transactionStore";
+import { calculateJobPrice, JobType } from "./pricingEngine";
 
 const app = express();
 app.use(cors());
@@ -39,16 +46,62 @@ function decodeError(e: any): string {
 app.get("/health", (_req, res) => {
   res.json({
     ok: true,
-    machine: { address: getMachineAddress(), machineId: MACHINE_ID_TEXT },
+    machine: { address: getMachineAddress("M-042"), machineId: "M-042" },
+    machine051: { address: getMachineAddress("M-051"), machineId: "M-051" },
     verifier: { address: getVerifierAddress() },
   });
+});
+
+// ---------------------------------------------------------------- dynamic pricing API
+/** Common deterministic dynamic pricing engine for both M-042 and M-051 */
+app.post("/api/pricing/calculate", (req, res) => {
+  try {
+    const { jobType, params } = req.body ?? {};
+    if (!jobType) {
+      return res.status(400).json({ error: "jobType is required (PACKAGE_TRANSPORT or COLOR_SORTING)" });
+    }
+    const calculation = calculateJobPrice(jobType as JobType, params || {});
+    res.json(calculation);
+  } catch (err: any) {
+    res.status(400).json({ error: err.message || String(err) });
+  }
 });
 
 // ---------------------------------------------------------------- metadata API
 /** Off-chain job metadata endpoint: saves task parameters, returns canonical JSON + keccak256 hash */
 app.post("/api/jobs", (req, res) => {
-  const { taskType, source, target, simulateFailure, description } = req.body ?? {};
-  const stored = storeMetadata({ taskType, source, target, simulateFailure, description });
+  const {
+    taskType,
+    source,
+    target,
+    simulateFailure,
+    description,
+    machineId,
+    pickupLocation,
+    destination,
+    distanceKm,
+    packageWeightKg,
+    objectCount,
+    colors,
+    requiredAccuracyPercent,
+    pricing,
+  } = req.body ?? {};
+  const stored = storeMetadata({
+    taskType,
+    source,
+    target,
+    simulateFailure,
+    description,
+    machineId,
+    pickupLocation,
+    destination,
+    distanceKm,
+    packageWeightKg,
+    objectCount,
+    colors,
+    requiredAccuracyPercent,
+    pricing,
+  });
   res.json(stored);
 });
 
@@ -128,8 +181,9 @@ app.get("/jobs/:jobId", (req, res) => {
 // ---------------------------------------------------------------- MACHINE AGENT routes
 app.post("/machine/jobs/:jobId/accept", async (req, res) => {
   const jobId = req.params.jobId;
+  const { machineId } = req.body ?? {};
   try {
-    const result = await acceptAndStart(jobId);
+    const result = await acceptAndStart(jobId, machineId || "M-042");
     res.json(result);
   } catch (e: any) {
     const error = decodeError(e);
@@ -141,18 +195,64 @@ app.post("/machine/jobs/:jobId/accept", async (req, res) => {
 app.post("/machine/jobs/:jobId/evidence", async (req, res) => {
   const jobId = req.params.jobId;
   try {
-    const { packageId, target, finalPosition, delivered, result } = req.body ?? {};
-    if (!packageId || !target || !finalPosition || typeof delivered !== "boolean") {
-      return res.status(400).json({
-        error: "expected { packageId, target:{zone,x,y}, finalPosition:{x,y}, delivered:boolean }",
-      });
-    }
+    const body = req.body ?? {};
+    let submission: any;
 
-    const submission = await submitEvidenceAndProof(
-      jobId,
-      { packageId, target, finalPosition, delivered },
-      result === "fail" ? "fail" : "success"
-    );
+    if (body.taskType === "COLOR_SORTING" || body.objectsProcessed !== undefined) {
+      // Color sorting arm (M-051)
+      const evidence = {
+        jobId,
+        machineId: body.machineId || "M-051",
+        taskType: "COLOR_SORTING",
+        objectsProcessed: Number(body.objectsProcessed) || 100,
+        correctlySorted: Number(body.correctlySorted) || 97,
+        incorrectlySorted: Number(body.incorrectlySorted) || 3,
+        colorDistribution: body.colorDistribution || { red: 25, blue: 24, green: 25, yellow: 23 },
+        requiredAccuracy: Number(body.requiredAccuracy) || 95,
+        actualAccuracy: Number(body.actualAccuracy) || 97,
+        completedAt: body.completedAt || new Date().toISOString(),
+      };
+      submission = await submitGenericEvidenceAndProof(
+        jobId,
+        evidence,
+        body.result === "fail" ? "fail" : "success",
+        evidence.machineId
+      );
+    } else if (body.taskType === "PACKAGE_TRANSPORT" || body.pickupLocation !== undefined) {
+      // Transport robot (M-042)
+      const evidence = {
+        jobId,
+        machineId: body.machineId || "M-042",
+        taskType: "PACKAGE_TRANSPORT",
+        pickupLocation: body.pickupLocation || "Warehouse A",
+        destination: body.destination || "Warehouse B",
+        packageId: body.packageId || "PKG-042-ALPHA",
+        packageWeightKg: Number(body.packageWeightKg || body.packageWeight || 10),
+        distanceKm: Number(body.distanceKm || body.distance || 5),
+        completedAt: body.completedAt || new Date().toISOString(),
+        delivered: body.delivered !== false,
+      };
+      submission = await submitGenericEvidenceAndProof(
+        jobId,
+        evidence,
+        body.result === "fail" ? "fail" : "success",
+        evidence.machineId
+      );
+    } else {
+      // Standard robot simulation evidence
+      const { packageId, target, finalPosition, delivered, result, machineId } = body;
+      if (!packageId || !target || !finalPosition || typeof delivered !== "boolean") {
+        return res.status(400).json({
+          error: "expected { packageId, target:{zone,x,y}, finalPosition:{x,y}, delivered:boolean } or taskType: PACKAGE_TRANSPORT | COLOR_SORTING",
+        });
+      }
+      submission = await submitEvidenceAndProof(
+        jobId,
+        { packageId, target, finalPosition, delivered },
+        result === "fail" ? "fail" : "success",
+        machineId || "M-042"
+      );
+    }
 
     const verifierUrl = process.env.VERIFIER_URL || `${SELF_URL}/verifier/verify`;
     const verifyRes = await fetch(verifierUrl, {

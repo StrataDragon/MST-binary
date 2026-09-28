@@ -16,7 +16,13 @@ export type Position = {
   y: number;
 };
 
-export type TaskType = "MOVE_OBJECT" | "PICK_AND_PLACE" | "LOAD_AND_DUMP" | "DELIVERY";
+export type TaskType =
+  | "MOVE_OBJECT"
+  | "PICK_AND_PLACE"
+  | "LOAD_AND_DUMP"
+  | "DELIVERY"
+  | "PACKAGE_TRANSPORT"
+  | "COLOR_SORTING";
 
 export type RobotState =
   | "IDLE"

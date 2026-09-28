@@ -5,17 +5,23 @@
   "machineIdBytes32": "0x4d2d303432000000000000000000000000000000000000000000000000000000",
   "machineWallet": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
   "machineSigner": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
+  "machine051": {
+    "machineId": "M-051",
+    "machineIdBytes32": "0x4d2d303531000000000000000000000000000000000000000000000000000000",
+    "machineWallet": "0x90F79bf6EB2c4f870365E785982E1f101E93b906"
+  },
   "job": {
-    "jobId": "0x6337702305a16607f736595ec617312b5b7cc30a9bdc039c6ac7c1ab2a546bfb",
+    "jobId": "0x749c459f890725e1dc28f55ee9236068ceadf51755d7b3e1776e144c828c772e",
     "description": "Move package A to green zone",
     "metadataHash": "0xca4e8d754006ff4030785bb30ab5984e922b1d23b588adc2dfac3305a0ea9ade",
     "reward": "100000000000000000000",
-    "deadline": "1790609943",
+    "deadline": "1790614244",
     "customer": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
   },
   "transactions": {
-    "registerMachine": "0x8c38f7785e6cb124d5f2ccbb0f29c573fe89f611402c4b75d70e1eb5d39b4c92",
-    "createJob": "0x2c45f4743639c72ee84e05222adc97ba87ad12f161dcb76262328896f7a3fe3a"
+    "registerMachine": "0x7034e1c8e9c002cc9104fbd9e734649f31c28a6cc710c1efc2eb2fc63a0583c4",
+    "registerMachine051": "0x56b715599dabb46671d8878c2eb16deda62fca37e00a3092ec66e4b770cd89d4",
+    "createJob": "0x4a209738522f83a39ea4fff4d6280fe06ba9637a1448e4ae7d55e14808f9ccdd"
   },
   "note": "Public info only. No private keys."
 }

@@ -17,12 +17,19 @@ import { CreateJobForm } from "./components/CreateJobForm";
 import { EventFeed } from "./components/EventFeed";
 import { JobDetail } from "./components/JobDetail";
 import { JobSummary } from "./components/JobList";
+import { MarketplaceView } from "./components/MarketplaceView";
+import { DynamicPricingDashboard } from "./components/DynamicPricingDashboard";
+import { TransportJobModal } from "./components/TransportJobModal";
+import { ColorSortingJobModal } from "./components/ColorSortingJobModal";
+import { TransportSimulationView } from "./components/TransportSimulationView";
+import { ColorSortingSimulationView } from "./components/ColorSortingSimulationView";
+import { JobPriceCalculation } from "./lib/pricingEngine";
 import { getReadProvider, getEscrow, getLiveBalance } from "./lib/wallet";
 import { cfg } from "./lib/config";
 import { X, Sparkles } from "lucide-react";
 
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<SentinelTab>("overview");
+  const [currentTab, setCurrentTab] = useState<SentinelTab>("marketplace");
   const [signer, setSigner] = useState<any>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [clientBalance, setClientBalance] = useState<string>("0.0000");
@@ -32,6 +39,15 @@ export default function App() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
+
+  // Autonomous Jobs & Marketplace state
+  const [showTransportModal, setShowTransportModal] = useState(false);
+  const [showColorSortingModal, setShowColorSortingModal] = useState(false);
+  const [activeSimulation, setActiveSimulation] = useState<{
+    type: "transport" | "color";
+    jobId: string;
+    amount: string;
+  } | null>(null);
 
   // Load all jobs from chain
   async function loadJobs() {
@@ -131,6 +147,64 @@ export default function App() {
 
         {/* Page Content Container */}
         <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
+          {/* TAB: MARKETPLACE (Dual Machine Fleet M-042 and M-051 with Dynamic Pricing) */}
+          {currentTab === "marketplace" && (
+            <div className="space-y-6">
+              <MarketplaceView
+                onHireTransport={() => setShowTransportModal(true)}
+                onHireColorSorting={() => setShowColorSortingModal(true)}
+                onOpenPricingDashboard={() => setCurrentTab("pricing")}
+              />
+
+              {/* Active Simulation Execution Chamber if hired */}
+              {activeSimulation && (
+                <div className="pt-6 border-t border-[#1E1E24] space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold uppercase tracking-wider text-white">
+                        Active Machine Execution Chamber
+                      </h3>
+                      <p className="text-xs text-[#9CA3AF]">
+                        Live hardware simulation connected to on-chain JobEscrow ({activeSimulation.jobId.slice(0, 10)}…)
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => setActiveSimulation(null)}
+                      className="px-3 py-1.5 rounded-lg border border-[#1E1E24] bg-white/5 hover:bg-white/10 text-xs text-[#9CA3AF] hover:text-white transition-colors"
+                    >
+                      Hide Execution Chamber
+                    </button>
+                  </div>
+
+                  {activeSimulation.type === "transport" ? (
+                    <TransportSimulationView
+                      jobId={activeSimulation.jobId}
+                      lockedAmountMst={activeSimulation.amount}
+                      onSettled={() => {
+                        loadJobs();
+                        loadBalance();
+                      }}
+                    />
+                  ) : (
+                    <ColorSortingSimulationView
+                      jobId={activeSimulation.jobId}
+                      lockedAmountMst={activeSimulation.amount}
+                      onSettled={() => {
+                        loadJobs();
+                        loadBalance();
+                      }}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB: DYNAMIC PRICING DASHBOARD (Side-by-side comparison of Transport vs Color Sorting) */}
+          {currentTab === "pricing" && (
+            <DynamicPricingDashboard />
+          )}
+
           {/* TAB 1: OVERVIEW (SENTINEL Stat Tiles + 30d Trajectory + Machine Breakdown) */}
           {currentTab === "overview" && (
             <OverviewView
@@ -295,6 +369,44 @@ export default function App() {
             />
           </div>
         </div>
+      )}
+
+      {/* Transport Job Creation & Dynamic Pricing Modal */}
+      {showTransportModal && (
+        <TransportJobModal
+          signer={signer}
+          isOpen={showTransportModal}
+          onClose={() => setShowTransportModal(false)}
+          onJobCreated={(jobId, calc) => {
+            setSelectedJob(jobId);
+            setActiveSimulation({
+              type: "transport",
+              jobId,
+              amount: calc.finalPrice.toString(),
+            });
+            setCurrentTab("marketplace");
+            loadJobs();
+          }}
+        />
+      )}
+
+      {/* Color Sorting Job Creation & Dynamic Pricing Modal */}
+      {showColorSortingModal && (
+        <ColorSortingJobModal
+          signer={signer}
+          isOpen={showColorSortingModal}
+          onClose={() => setShowColorSortingModal(false)}
+          onJobCreated={(jobId, calc) => {
+            setSelectedJob(jobId);
+            setActiveSimulation({
+              type: "color",
+              jobId,
+              amount: calc.finalPrice.toString(),
+            });
+            setCurrentTab("marketplace");
+            loadJobs();
+          }}
+        />
       )}
     </div>
   );

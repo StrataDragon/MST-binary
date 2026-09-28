@@ -38,6 +38,8 @@ export function TopNav({
 
   const tabTitles: Record<SentinelTab, string> = {
     overview: "Overview",
+    marketplace: "Autonomous Marketplace",
+    pricing: "Dynamic Pricing Engine",
     "wallet-map": "Wallet Map",
     "tx-history": "Transaction History",
     "transaction-lab": "Transaction Lab",

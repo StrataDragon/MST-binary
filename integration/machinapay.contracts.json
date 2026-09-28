@@ -5,15 +5,15 @@
   "explorerUrl": null,
   "nativeToken": "ETH",
   "addresses": {
-    "MachineRegistry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-    "JobEscrow": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+    "MachineRegistry": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+    "JobEscrow": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
   },
   "verifier": "0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225",
   "eip712": {
     "name": "MachinaPay JobEscrow",
     "version": "1",
     "chainId": 31337,
-    "verifyingContract": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+    "verifyingContract": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
   },
   "abi": {
     "MachineRegistry": [

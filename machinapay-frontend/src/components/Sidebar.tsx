@@ -10,11 +10,15 @@ import {
   BookOpen,
   Layers,
   Settings,
+  Bot,
+  DollarSign,
 } from "lucide-react";
 import { cfg } from "../lib/config";
 
 export type SentinelTab =
   | "overview"
+  | "marketplace"
+  | "pricing"
   | "wallet-map"
   | "tx-history"
   | "transaction-lab"
@@ -53,6 +57,50 @@ export function Sidebar({ currentTab, onSelectTab, jobCount }: SidebarProps) {
 
         {/* Navigation Groups */}
         <div className="p-2 md:p-3 space-y-6 overflow-y-auto max-h-[calc(100vh-140px)]">
+          {/* FLEET & COMMERCE */}
+          <div>
+            <p className="hidden md:block px-3 text-[11px] font-bold uppercase tracking-wide text-[#6B7280] mb-2">
+              Autonomous Fleet
+            </p>
+            <nav className="space-y-0.5">
+              <button
+                onClick={() => onSelectTab("marketplace")}
+                title="Marketplace"
+                className={`w-full flex items-center justify-center md:justify-between px-2 md:px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                  currentTab === "marketplace"
+                    ? "bg-white/10 text-white border-l-2 border-accent-blue font-semibold"
+                    : "text-[#9CA3AF] hover:text-white hover:bg-white/5"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Bot className={`w-4 h-4 flex-shrink-0 ${currentTab === "marketplace" ? "text-accent-blue" : "text-[#9CA3AF]"}`} />
+                  <span className="hidden md:inline">Marketplace</span>
+                </div>
+                <span className="hidden md:inline text-[10px] font-mono px-1.5 py-0.2 rounded bg-accent-blue/20 text-accent-blue">
+                  2 Nodes
+                </span>
+              </button>
+
+              <button
+                onClick={() => onSelectTab("pricing")}
+                title="Dynamic Pricing"
+                className={`w-full flex items-center justify-center md:justify-between px-2 md:px-3 py-2 rounded-md text-xs font-medium transition-all ${
+                  currentTab === "pricing"
+                    ? "bg-white/10 text-white border-l-2 border-accent-green font-semibold"
+                    : "text-[#9CA3AF] hover:text-white hover:bg-white/5"
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <DollarSign className={`w-4 h-4 flex-shrink-0 ${currentTab === "pricing" ? "text-accent-green" : "text-[#9CA3AF]"}`} />
+                  <span className="hidden md:inline">Dynamic Pricing</span>
+                </div>
+                <span className="hidden md:inline text-[10px] font-mono px-1.5 py-0.2 rounded bg-accent-green/20 text-accent-green">
+                  Locked
+                </span>
+              </button>
+            </nav>
+          </div>
+
           {/* MONITORING */}
           <div>
             <p className="hidden md:block px-3 text-[11px] font-bold uppercase tracking-wide text-[#6B7280] mb-2">

@@ -4,8 +4,8 @@
   "explorerUrl": null,
   "nativeToken": "ETH",
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-  "MachineRegistry": "0x5FbDB2315678afecb367f032d93F642f64180aa3",
-  "JobEscrow": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  "MachineRegistry": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+  "JobEscrow": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
   "MockToken": null,
   "verifier": "0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225",
   "minStake": "0",
@@ -14,17 +14,17 @@
     "name": "MachinaPay JobEscrow",
     "version": "1",
     "chainId": 31337,
-    "verifyingContract": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+    "verifyingContract": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
   },
   "transactions": {
-    "deployMachineRegistry": "0xa5588b52f961cca28843a7a08628e9158975ae517cf31a6eb695e9e592a23baa",
-    "deployJobEscrow": "0xcde7c419d987a2843ce161e6130de1296853443fefdacc13ece28fea7e5029e3",
-    "registrySetEscrow": "0x885b872b6cb384832c06f3cc27597f52a03e3f51248d96e9affd6fdd24d40c3d"
+    "deployMachineRegistry": "0x2a3858b8fbbe40f232cea445b5c427b4dd756a151f1fcf0453b3f27a19c14de6",
+    "deployJobEscrow": "0x8b93fd09f1f5b71eda20b682a520ec6cc90b3ae599c16675e7f654aadd7ff448",
+    "registrySetEscrow": "0xbc2b997cf130aac01257c8442c4e73e4eccf9319ec709d0e22d074ec147b493c"
   },
   "blockNumbers": {
-    "deployMachineRegistry": 1,
-    "deployJobEscrow": 2,
-    "registrySetEscrow": 3
+    "deployMachineRegistry": 41,
+    "deployJobEscrow": 42,
+    "registrySetEscrow": 43
   },
-  "deployedAt": "2026-09-28T14:38:56.418Z"
+  "deployedAt": "2026-09-28T15:50:41.711Z"
 }

@@ -47,11 +47,11 @@ async function main() {
   const machineIdStr = process.env.MACHINE_ID || "M-042";
   const machineIdBytes32 = hre.ethers.encodeBytes32String(machineIdStr);
 
-  // Check if machine is registered
+  // Check if machine M-042 is registered
   const isRegistered = await registry.isRegistered(machineIdBytes32);
   let regTxHash = "";
+  const stakeEther = process.env.MACHINE_STAKE || "0.01";
   if (!isRegistered) {
-    const stakeEther = process.env.MACHINE_STAKE || "0.01";
     const regTx = await registry.registerMachine(
       machineIdBytes32,
       machineWallet,
@@ -65,7 +65,28 @@ async function main() {
     console.log(`Machine ${machineIdStr} already registered.`);
   }
 
-  // Fund machine on localhost if needed
+  // Register machine M-051 (Robotic Pick-and-Place Color Sorting Arm)
+  const machine051IdStr = "M-051";
+  const machine051Bytes32 = hre.ethers.encodeBytes32String(machine051IdStr);
+  const machine051Key = process.env.MACHINE_051_PRIVATE_KEY || "0x7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
+  const machine051Wallet = new hre.ethers.Wallet(machine051Key).address;
+  const is051Registered = await registry.isRegistered(machine051Bytes32);
+  let reg051TxHash = "";
+  if (!is051Registered) {
+    const reg051Tx = await registry.registerMachine(
+      machine051Bytes32,
+      machine051Wallet,
+      machine051Wallet,
+      { value: hre.ethers.parseEther(stakeEther) }
+    );
+    const reg051Receipt = await reg051Tx.wait();
+    reg051TxHash = reg051Receipt?.hash || reg051Tx.hash;
+    console.log(`Registered machine ${machine051IdStr} with stake ${stakeEther} (tx: ${reg051TxHash})`);
+  } else {
+    console.log(`Machine ${machine051IdStr} already registered.`);
+  }
+
+  // Fund machine wallets on localhost if needed
   if (hre.network.name === "localhost" || hre.network.name === "hardhat") {
     const machineBal = await hre.ethers.provider.getBalance(machineWallet);
     if (machineBal < hre.ethers.parseEther("1")) {
@@ -76,6 +97,16 @@ async function main() {
       });
       await fundTx.wait();
       console.log(`Funded machine wallet ${machineWallet} with ${fundAmount} ETH`);
+    }
+
+    const machine051Bal = await hre.ethers.provider.getBalance(machine051Wallet);
+    if (machine051Bal < hre.ethers.parseEther("1")) {
+      const fundTx = await deployer.sendTransaction({
+        to: machine051Wallet,
+        value: hre.ethers.parseEther("10"),
+      });
+      await fundTx.wait();
+      console.log(`Funded machine M-051 wallet ${machine051Wallet} with 10 ETH`);
     }
   }
 
@@ -102,6 +133,11 @@ async function main() {
     machineIdBytes32,
     machineWallet,
     machineSigner,
+    machine051: {
+      machineId: machine051IdStr,
+      machineIdBytes32: machine051Bytes32,
+      machineWallet: machine051Wallet,
+    },
     job: {
       jobId,
       description,
@@ -112,6 +148,7 @@ async function main() {
     },
     transactions: {
       registerMachine: regTxHash,
+      registerMachine051: reg051TxHash,
       createJob: createReceipt?.hash || createTx.hash,
     },
     note: "Public info only. No private keys.",

@@ -17,7 +17,8 @@
     "demo:local": "hardhat run scripts/demo-e2e.ts",
     "smoke:mst": "hardhat run scripts/smoke-deploy.ts --network mst",
     "smoke:local": "hardhat run scripts/smoke-deploy.ts",
-    "e2e": "hardhat run scripts/e2e.ts --network localhost"
+    "e2e": "hardhat run scripts/e2e.ts --network localhost",
+    "e2e:dual": "hardhat run scripts/e2e-dual-machines.ts --network localhost"
   },
 
   "devDependencies": {
