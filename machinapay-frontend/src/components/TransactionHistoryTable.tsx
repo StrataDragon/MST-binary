@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { formatEther } from "ethers";
 import {
   ArrowDownLeft,
   ArrowUpRight,
@@ -12,11 +13,13 @@ import {
   CheckCircle2,
   AlertTriangle,
   Clock,
+  RefreshCw,
 } from "lucide-react";
 import { addressBook } from "../lib/addressBook";
 import { priceFeed } from "../lib/priceFeed";
 import { settingsStore } from "../lib/settings";
-import { cfg } from "../lib/config";
+import { cfg, NATIVE_SYMBOL } from "../lib/config";
+import { getReadProvider, getEscrow, getRegistry } from "../lib/wallet";
 import { TxEvent, eventBus } from "../lib/events";
 
 export interface TxHistoryItem {
@@ -85,52 +88,130 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
     window.history.replaceState({}, "", newUrl);
   }, [statusFilter, directionFilter, minAmount, maxAmount, escrowOnly, searchQuery]);
 
-  // Seeded mock transactions + live broadcast transactions from eventBus
-  const [transactions, setTransactions] = useState<TxHistoryItem[]>([
-    {
-      id: "tx-seed-1",
-      txHash: "0x17946b086b55376bf4acc37009bcbdbb3ace2382d51bec88b3f5454c3c8d57f1",
-      timestamp: "1h ago",
-      timeMillis: Date.now() - 3600000,
-      direction: "out",
-      counterparty: cfg.addresses.JobEscrow,
-      amountEth: "100.00",
-      status: "confirmed",
-      gasUsed: "142,500 gas",
-      blockNumber: 1,
-      jobId: "0x795ee219624b1560c824b599c514da774a8e269c22278e5eac26d58c6ae8b807",
-      nonce: 0,
-      calldata: "createJob(bytes32,bytes32,uint256,string)",
-    },
-    {
-      id: "tx-seed-2",
-      txHash: "0xfd9987e33b9f9db27714fc2a6b684676b46e781eee8ab66ab129fa55dc8f09c8",
-      timestamp: "1h ago",
-      timeMillis: Date.now() - 3650000,
-      direction: "out",
-      counterparty: cfg.addresses.MachineRegistry,
-      amountEth: "0.01",
-      status: "confirmed",
-      gasUsed: "88,210 gas",
-      blockNumber: 1,
-      nonce: 1,
-      calldata: "registerMachine(string,address)",
-    },
-    {
-      id: "tx-seed-3",
-      txHash: "0x8c38f7785e6cb124d5f2ccbb0f29c573fe89f611402c4b75d70e1eb5d39b4c92",
-      timestamp: "2h ago",
-      timeMillis: Date.now() - 7200000,
-      direction: "out",
-      counterparty: "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
-      amountEth: "10.00",
-      status: "confirmed",
-      gasUsed: "21,000 gas",
-      blockNumber: 1,
-      nonce: 2,
-    },
-  ]);
+  // Real on-chain transactions (no hardcoded seed rows)
+  const [transactions, setTransactions] = useState<TxHistoryItem[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
 
+  async function loadOnChainTransactions() {
+    setLoading(true);
+    try {
+      const provider = getReadProvider();
+      const escrow = getEscrow(provider);
+      const registry = getRegistry(provider);
+
+      const currentBlock = await provider.getBlockNumber().catch(() => 0);
+      if (currentBlock === 0) {
+        setTransactions([]);
+        setLoading(false);
+        return;
+      }
+
+      const startBlock = Math.max(0, currentBlock - 2000);
+
+      const [
+        createdLogs,
+        releasedLogs,
+        refundedLogs,
+        regLogs,
+      ] = await Promise.all([
+        escrow.queryFilter(escrow.filters.JobCreated(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.PaymentReleased(), startBlock, currentBlock).catch(() => []),
+        escrow.queryFilter(escrow.filters.JobRefunded(), startBlock, currentBlock).catch(() => []),
+        registry.queryFilter(registry.filters.MachineRegistered(), startBlock, currentBlock).catch(() => []),
+      ]);
+
+      const onChainList: TxHistoryItem[] = [];
+
+      for (const log of createdLogs) {
+        const args = (log as any).args;
+        const amt = args?.reward ? formatEther(args.reward) : "0.00";
+        onChainList.push({
+          id: `tx-create-${log.transactionHash}-${log.index}`,
+          txHash: log.transactionHash,
+          timestamp: `Block #${log.blockNumber}`,
+          timeMillis: log.blockNumber,
+          direction: "out",
+          counterparty: cfg.addresses.JobEscrow,
+          amountEth: amt,
+          status: "confirmed",
+          gasUsed: "142,500 gas",
+          blockNumber: log.blockNumber,
+          jobId: args?.jobId,
+          calldata: `createJob("${args?.description || "Escrow Job"}")`,
+        });
+      }
+
+      for (const log of releasedLogs) {
+        const args = (log as any).args;
+        const amt = args?.reward ? formatEther(args.reward) : "0.00";
+        onChainList.push({
+          id: `tx-release-${log.transactionHash}-${log.index}`,
+          txHash: log.transactionHash,
+          timestamp: `Block #${log.blockNumber}`,
+          timeMillis: log.blockNumber,
+          direction: "in",
+          counterparty: args?.machineWallet || cfg.addresses.JobEscrow,
+          amountEth: amt,
+          status: "confirmed",
+          gasUsed: "48,000 gas",
+          blockNumber: log.blockNumber,
+          jobId: args?.jobId,
+          calldata: "JobEscrow.release()",
+        });
+      }
+
+      for (const log of refundedLogs) {
+        const args = (log as any).args;
+        const amt = args?.reward ? formatEther(args.reward) : "0.00";
+        onChainList.push({
+          id: `tx-refund-${log.transactionHash}-${log.index}`,
+          txHash: log.transactionHash,
+          timestamp: `Block #${log.blockNumber}`,
+          timeMillis: log.blockNumber,
+          direction: "in",
+          counterparty: cfg.addresses.JobEscrow,
+          amountEth: amt,
+          status: "confirmed",
+          gasUsed: "36,000 gas",
+          blockNumber: log.blockNumber,
+          jobId: args?.jobId,
+          calldata: "JobEscrow.refund()",
+        });
+      }
+
+      for (const log of regLogs) {
+        const args = (log as any).args;
+        const amt = args?.stake ? formatEther(args.stake) : "0.01";
+        onChainList.push({
+          id: `tx-reg-${log.transactionHash}-${log.index}`,
+          txHash: log.transactionHash,
+          timestamp: `Block #${log.blockNumber}`,
+          timeMillis: log.blockNumber,
+          direction: "out",
+          counterparty: cfg.addresses.MachineRegistry,
+          amountEth: amt,
+          status: "confirmed",
+          gasUsed: "88,210 gas",
+          blockNumber: log.blockNumber,
+          calldata: "MachineRegistry.registerMachine()",
+        });
+      }
+
+      onChainList.sort((a, b) => b.blockNumber - a.blockNumber);
+      setTransactions(onChainList);
+    } catch (err) {
+      console.warn("Error loading on-chain transactions:", err);
+      setTransactions([]);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadOnChainTransactions();
+  }, [clientAddress]);
+
+  // Live broadcast transactions from eventBus
   useEffect(() => {
     const unsub = eventBus.subscribe((evt) => {
       if (evt.type === "transfer" && evt.txHash) {
@@ -141,15 +222,47 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
           timeMillis: Date.now(),
           direction: "out",
           counterparty: evt.to,
-          amountEth: evt.amount.replace(" ETH", "").trim(),
+          amountEth: evt.amount.replace(/[^0-9.]/g, "").trim(),
           status: evt.status === "failed" ? "failed" : evt.status === "confirmed" ? "confirmed" : "pending",
           gasUsed: evt.gasUsed || "21,000 gas",
           blockNumber: evt.blockNumber || 1,
         };
-        setTransactions((prev) => [item, ...prev]);
+        setTransactions((prev) => {
+          if (prev.some((t) => t.txHash === item.txHash)) return prev;
+          return [item, ...prev];
+        });
       }
     });
     return () => unsub();
+  }, []);
+
+  // Listen to real-time events on escrow and registry
+  useEffect(() => {
+    let escrow: any;
+    let registry: any;
+    try {
+      const provider = getReadProvider();
+      escrow = getEscrow(provider);
+      registry = getRegistry(provider);
+    } catch {
+      return;
+    }
+
+    const reload = () => {
+      loadOnChainTransactions();
+    };
+
+    escrow.on("JobCreated", reload);
+    escrow.on("PaymentReleased", reload);
+    escrow.on("JobRefunded", reload);
+    registry.on("MachineRegistered", reload);
+
+    return () => {
+      escrow.off("JobCreated", reload);
+      escrow.off("PaymentReleased", reload);
+      escrow.off("JobRefunded", reload);
+      registry.off("MachineRegistered", reload);
+    };
   }, []);
 
   // Filter transactions
@@ -180,8 +293,8 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
   const totalPages = Math.max(1, Math.ceil(filteredTxs.length / pageSize));
   const paginatedTxs = filteredTxs.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const ethPrice = priceFeed.getCachedPrice();
   const isCompact = settings.displayDensity === "compact";
+  const isTestnet = cfg.chainId === 91562037 || cfg.network.toLowerCase().includes("testnet");
 
   return (
     <div className="bg-card border border-border rounded-lg shadow-sm p-5 space-y-4 font-mono text-xs">
@@ -246,14 +359,14 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
         <div className="flex items-center gap-1.5">
           <input
             type="text"
-            placeholder="Min ETH"
+            placeholder={`Min ${NATIVE_SYMBOL}`}
             value={minAmount}
             onChange={(e) => setMinAmount(e.target.value)}
             className="w-1/2 bg-page border border-border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent-blue"
           />
           <input
             type="text"
-            placeholder="Max ETH"
+            placeholder={`Max ${NATIVE_SYMBOL}`}
             value={maxAmount}
             onChange={(e) => setMaxAmount(e.target.value)}
             className="w-1/2 bg-page border border-border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent-blue"
@@ -326,12 +439,12 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
                     </div>
                   </td>
 
-                  {/* Amount with USD subline */}
+                  {/* Amount with Native Token and clean testnet indicator */}
                   <td className={`px-3 ${isCompact ? "py-2" : "py-3"}`}>
                     <div>
-                      <span className="font-bold text-primary block">{tx.amountEth} ETH</span>
+                      <span className="font-bold text-primary block">{tx.amountEth} {NATIVE_SYMBOL}</span>
                       <span className="text-[10px] text-muted block">
-                        {priceFeed.toUsdString(tx.amountEth, ethPrice)}
+                        {isTestnet ? "Testnet token" : priceFeed.toUsdString(tx.amountEth)}
                       </span>
                     </div>
                   </td>
@@ -357,10 +470,10 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
                   <td className={`px-3 ${isCompact ? "py-2" : "py-3"}`}>
                     {tx.jobId ? (
                       <span className="text-accent-blue truncate max-w-[100px] block" title={tx.jobId}>
-                        {tx.jobId.slice(0, 10)}…
+                        {tx.jobId.slice(0, 10)}...
                       </span>
                     ) : (
-                      <span className="text-muted">—</span>
+                      <span className="text-muted">-</span>
                     )}
                   </td>
 
@@ -371,10 +484,21 @@ export function TransactionHistoryTable({ clientAddress, onSelectTx }: Transacti
               );
             })}
 
-            {paginatedTxs.length === 0 && (
+            {loading && transactions.length === 0 && (
               <tr>
-                <td colSpan={8} className="py-8 text-center text-muted">
-                  No transactions match the selected filters.
+                <td colSpan={8} className="py-12 text-center text-muted">
+                  <div className="flex items-center justify-center gap-2">
+                    <RefreshCw className="w-4 h-4 animate-spin text-accent-blue" />
+                    <span>Loading real on-chain transactions...</span>
+                  </div>
+                </td>
+              </tr>
+            )}
+
+            {!loading && paginatedTxs.length === 0 && (
+              <tr>
+                <td colSpan={8} className="py-12 text-center text-muted">
+                  No on-chain transactions found.
                 </td>
               </tr>
             )}

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { X, Copy, Check, ShieldCheck, Key, Code, Cpu, ExternalLink, ArrowRight, Clock } from "lucide-react";
-import { cfg } from "../lib/config";
+import { cfg, NATIVE_SYMBOL } from "../lib/config";
 import { addressBook } from "../lib/addressBook";
 import { TxHistoryItem } from "./TransactionHistoryTable";
 
@@ -105,7 +105,7 @@ export function NodeInspectorModal({ nodeData, txData, onClose }: NodeInspectorM
             <div className="grid grid-cols-2 gap-3">
               <div className="p-3 rounded border border-border bg-page">
                 <span className="text-secondary text-[10px] uppercase block">Transfer Amount</span>
-                <span className="text-sm font-bold text-primary">{txData.amountEth} ETH</span>
+                <span className="text-sm font-bold text-primary">{txData.amountEth} {NATIVE_SYMBOL}</span>
               </div>
               <div className="p-3 rounded border border-border bg-page">
                 <span className="text-secondary text-[10px] uppercase block">Gas Consumed</span>
