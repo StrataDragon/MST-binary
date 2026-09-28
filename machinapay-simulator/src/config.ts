@@ -18,7 +18,7 @@ export const config = {
    * jobs from Laptop 1 to this simulator on Laptop 2.
    * Example: ws://192.168.1.10:3000/ws
    */
-  simulatorWsUrl: readEnv("VITE_SIMULATOR_WS_URL", "ws://localhost:8080"),
+  simulatorWsUrl: readEnv("VITE_SIMULATOR_WS_URL", "ws://localhost:4000/ws"),
 
   /** If true, runs entirely offline with a built-in fake backend for testing. */
   mockMode: readEnv("VITE_MOCK_MODE", "true") === "true",

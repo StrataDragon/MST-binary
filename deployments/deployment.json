@@ -2,11 +2,13 @@
   "network": "localhost",
   "chainId": 31337,
   "explorerUrl": null,
-  "nativeToken": "ETH",
+  "nativeToken": "MSTC",
   "deployer": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
   "MachineRegistry": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
   "JobEscrow": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
-  "MockToken": null,
+  "machineRegistry": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+  "jobEscrow": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
+  "deploymentBlock": 1,
   "verifier": "0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225",
   "minStake": "0",
   "evmVersion": "paris",
@@ -20,11 +22,6 @@
     "deployMachineRegistry": "0x2a3858b8fbbe40f232cea445b5c427b4dd756a151f1fcf0453b3f27a19c14de6",
     "deployJobEscrow": "0x8b93fd09f1f5b71eda20b682a520ec6cc90b3ae599c16675e7f654aadd7ff448",
     "registrySetEscrow": "0xbc2b997cf130aac01257c8442c4e73e4eccf9319ec709d0e22d074ec147b493c"
-  },
-  "blockNumbers": {
-    "deployMachineRegistry": 41,
-    "deployJobEscrow": 42,
-    "registrySetEscrow": 43
   },
   "deployedAt": "2026-09-28T15:50:41.711Z"
 }

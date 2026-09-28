@@ -216,12 +216,23 @@ if exist "machinapay-simulator" (
     echo.
     echo [BONUS] Checking 3D Robot Simulator...
     netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
-    if %ERRORLEVEL% equ 0 (
+    if !ERRORLEVEL! equ 0 (
         echo [INFO] 3D Robot Simulator is already running on port 5174.
     ) else (
         echo [INFO] Spawning 3D Robot Simulator in a new window...
         start "MachinaPay 3D Robot Simulator" cmd /k "cd /d "%~dp0machinapay-simulator" && npm.cmd run dev"
-        echo [SUCCESS] 3D Robot Simulator spawned on port 5174!
+        
+        echo [INFO] Waiting for 3D Robot Simulator on port 5174...
+        for /l %%i in (1,1,30) do (
+            netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
+            if !ERRORLEVEL! equ 0 (
+                echo [SUCCESS] 3D Robot Simulator is ready on port 5174!
+                goto SIM_DONE
+            )
+            ping 127.0.0.1 -n 2 >nul
+        )
+        echo [WARNING] 3D Robot Simulator is still starting up, proceeding...
+        :SIM_DONE
     )
 )
 
