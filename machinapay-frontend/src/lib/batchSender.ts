@@ -1,6 +1,7 @@
 import { Signer } from "ethers";
 import { sendEth } from "./wallet";
 import { eventBus } from "./events";
+import { NATIVE_SYMBOL } from "./config";
 
 export interface BatchItem {
   id: string;
@@ -17,6 +18,7 @@ export interface BatchExecutionState {
   totalSentCount: number;
   totalFailedCount: number;
   totalQueuedEth: string;
+  totalQueuedNative: string;
   runningGasCostWei: bigint;
   isRunning: boolean;
   isCancelled: boolean;
@@ -68,7 +70,7 @@ export async function executeBatchTransfers(
     item.status = "pending";
     callbacks.onRowUpdate?.(i, item);
     callbacks.onLog?.(
-      `[${time}] [ROW_${i + 1}/${items.length}] Dispatching ${item.amount} ETH to ${item.recipient.slice(0, 10)}… (Nonce: ${currentNonce})`
+      `[${time}] [ROW_${i + 1}/${items.length}] Dispatching ${item.amount} ${NATIVE_SYMBOL} to ${item.recipient.slice(0, 10)}… (Nonce: ${currentNonce})`
     );
 
     try {
@@ -100,7 +102,7 @@ export async function executeBatchTransfers(
         txHash: tx.hash,
         from: clientAddress,
         to: item.recipient,
-        amount: `${item.amount} ETH`,
+        amount: `${item.amount} ${NATIVE_SYMBOL}`,
         type: "transfer",
         status: "confirmed",
         gasUsed: `${receipt?.gasUsed} gas`,
@@ -124,7 +126,7 @@ export async function executeBatchTransfers(
         id: `batch-${item.id}`,
         from: clientAddress,
         to: item.recipient,
-        amount: `${item.amount} ETH`,
+        amount: `${item.amount} ${NATIVE_SYMBOL}`,
         type: "transfer",
         status: "failed",
         error: item.error,
@@ -133,13 +135,16 @@ export async function executeBatchTransfers(
     }
   }
 
+  const queuedTotal = items
+    .reduce((sum, b) => sum + (parseFloat(b.amount) || 0), 0)
+    .toFixed(4);
+
   const state: BatchExecutionState = {
     items,
     totalSentCount,
     totalFailedCount,
-    totalQueuedEth: items
-      .reduce((sum, b) => sum + (parseFloat(b.amount) || 0), 0)
-      .toFixed(4),
+    totalQueuedEth: queuedTotal,
+    totalQueuedNative: queuedTotal,
     runningGasCostWei,
     isRunning: false,
     isCancelled: Boolean(isCancelledCheck && isCancelledCheck()),

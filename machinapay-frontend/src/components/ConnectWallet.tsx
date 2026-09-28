@@ -23,10 +23,14 @@ import {
 
 export function ConnectWallet({
   onConnected,
+  clientAddress,
+  onDisconnect,
 }: {
   onConnected: (address: string, signer: any) => void;
+  clientAddress?: string | null;
+  onDisconnect?: () => void;
 }) {
-  const [address, setAddress] = useState<string | null>(null);
+  const [address, setAddress] = useState<string | null>(clientAddress || null);
   const [balance, setBalance] = useState<string>("0.0000");
   const [walletName, setWalletName] = useState<string>("BridgeKey");
   const [error, setError] = useState<{ message: string; isNoProvider: boolean } | null>(null);
@@ -34,6 +38,18 @@ export function ConnectWallet({
   const [copied, setCopied] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [rpcResponding, setRpcResponding] = useState(true);
+
+  // Synchronize internal address with clientAddress prop
+  useEffect(() => {
+    if (clientAddress !== undefined) {
+      setAddress(clientAddress);
+      if (clientAddress) {
+        getLiveBalance(clientAddress).then((b) => setBalance(b)).catch(() => {});
+      } else {
+        setBalance("0.0000");
+      }
+    }
+  }, [clientAddress]);
 
   // Check RPC connectivity on mount
   useEffect(() => {
@@ -64,12 +80,16 @@ export function ConnectWallet({
 
         const accounts: string[] = await raw.request({ method: "eth_accounts" });
         if (mounted && Array.isArray(accounts) && accounts.length > 0 && accounts[0]) {
-          const provider = new BrowserProvider(raw);
-          const signer = await provider.getSigner();
+          const provider = new BrowserProvider(raw, "any");
           const addr = accounts[0];
           setAddress(addr);
           setWalletName(raw.isBridgeKey || (window as any).bridgekey ? "BridgeKey" : "Web3 Wallet");
-          onConnected(addr, signer);
+          const signer = await provider.getSigner(addr).catch(async () => {
+            return await provider.getSigner().catch(() => null);
+          });
+          if (signer) {
+            onConnected(addr, signer);
+          }
           const bal = await getLiveBalance(addr);
           if (mounted) setBalance(bal);
         }
@@ -85,13 +105,20 @@ export function ConnectWallet({
       if (!accs || accs.length === 0) {
         setAddress(null);
         setBalance("0.0000");
+        onDisconnect?.();
       } else {
         const newAddr = accs[0];
         setAddress(newAddr);
         const raw = findBridgeKeyProvider();
         if (raw) {
-          const provider = new BrowserProvider(raw);
-          provider.getSigner().then((s) => onConnected(newAddr, s));
+          const provider = new BrowserProvider(raw, "any");
+          provider.getSigner(newAddr).then((s) => {
+            if (mounted) onConnected(newAddr, s);
+          }).catch(() => {
+            provider.getSigner().then((s) => {
+              if (mounted) onConnected(newAddr, s);
+            }).catch(() => {});
+          });
         }
         getLiveBalance(newAddr).then((b) => {
           if (mounted) setBalance(b);

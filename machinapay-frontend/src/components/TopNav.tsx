@@ -154,7 +154,11 @@ export function TopNav({
         </div>
 
         {/* Connect Wallet Button / Address Pill */}
-        <ConnectWallet onConnected={onConnected} />
+        <ConnectWallet
+          onConnected={onConnected}
+          clientAddress={clientAddress}
+          onDisconnect={onDisconnect}
+        />
 
         {/* Logout / Disconnect Icon */}
         {clientAddress && (

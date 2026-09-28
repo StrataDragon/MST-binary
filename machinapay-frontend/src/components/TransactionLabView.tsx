@@ -12,13 +12,14 @@ import {
   Layers,
   ChevronDown,
   StopCircle,
+  Wallet,
 } from "lucide-react";
-import { cfg } from "../lib/config";
-import { sendEth } from "../lib/wallet";
+import { cfg, NATIVE_SYMBOL } from "../lib/config";
+import { sendEth, findBridgeKeyProvider, getLiveBalance } from "../lib/wallet";
 import { eventBus } from "../lib/events";
 import { addressBook } from "../lib/addressBook";
 import { executeBatchTransfers, BatchItem } from "../lib/batchSender";
-import { formatEther } from "ethers";
+import { BrowserProvider, formatEther, parseUnits } from "ethers";
 
 interface TransactionLabViewProps {
   signer: any;
@@ -34,6 +35,58 @@ export function TransactionLabView({
   onRefresh,
 }: TransactionLabViewProps) {
   const [activeMode, setActiveMode] = useState<"single" | "batch">("single");
+
+  // Local state to track wallet if BridgeKey is available or connected
+  const [localSigner, setLocalSigner] = useState<any>(signer || null);
+  const [localAddress, setLocalAddress] = useState<string | null>(clientAddress || null);
+  const [localBalance, setLocalBalance] = useState<string | null>(null);
+
+  // Synchronize when props update
+  useEffect(() => {
+    if (signer) setLocalSigner(signer);
+  }, [signer]);
+
+  useEffect(() => {
+    if (clientAddress) {
+      setLocalAddress(clientAddress);
+      getLiveBalance(clientAddress).then(setLocalBalance).catch(() => {});
+    } else {
+      setLocalAddress(null);
+      setLocalBalance(null);
+    }
+  }, [clientAddress]);
+
+  // Proactively auto-detect BridgeKey if not passed via props yet
+  useEffect(() => {
+    let mounted = true;
+    async function detectInjectedBridgeKey() {
+      if (clientAddress && signer) return;
+      const raw = findBridgeKeyProvider();
+      if (!raw) return;
+      try {
+        const accounts: string[] = await raw.request({ method: "eth_accounts" });
+        if (mounted && Array.isArray(accounts) && accounts.length > 0 && accounts[0]) {
+          const addr = accounts[0];
+          setLocalAddress(addr);
+          const p = new BrowserProvider(raw, "any");
+          const s = await p.getSigner(addr).catch(() => null);
+          if (mounted && s) setLocalSigner(s);
+          const bal = await getLiveBalance(addr).catch(() => null);
+          if (mounted && bal) setLocalBalance(bal);
+        }
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    detectInjectedBridgeKey();
+    return () => {
+      mounted = false;
+    };
+  }, [clientAddress, signer]);
+
+  const effectiveAddress = clientAddress || localAddress;
+  const effectiveSigner = signer || localSigner;
 
   // Single transfer form state
   const [recipient, setRecipient] = useState<string>("0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1");
@@ -53,7 +106,7 @@ export function TransactionLabView({
     },
     {
       id: "b-2",
-      recipient: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+      recipient: "0x8b31a3194B270c3F16f1a8eF963ff0d55998A7c9",
       amount: "0.03",
       status: "idle",
     },
@@ -63,16 +116,35 @@ export function TransactionLabView({
   const [runningGasCostWei, setRunningGasCostWei] = useState<bigint>(0n);
   const cancelBatchRef = useRef<boolean>(false);
 
-  // Address book autocomplete options
-  const addressBookEntries = addressBook.getAll();
+  // Address book autocomplete options (filter out current wallet and legacy dead entries)
+  const addressBookEntries = addressBook
+    .getAll()
+    .filter(
+      (e) =>
+        e.address.toLowerCase() !== effectiveAddress?.toLowerCase() &&
+        e.address.toLowerCase() !== "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266"
+    );
 
   // Terminal console logs
   const [terminalLogs, setTerminalLogs] = useState<string[]>([
     `[SYS] MachinaPay Transaction Lab v1.0 connected to ${cfg.network} (ID ${cfg.chainId})`,
     `[RPC] RPC endpoint online at ${cfg.rpcUrl}`,
-    `[KEY] Active signer: ${clientAddress || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"}`,
-    `[READY] Configure transfer parameters on the left and click 'Execute Transaction'.`,
+    `[KEY] Active signer: ${effectiveAddress || "Awaiting BridgeKey connection…"}`,
+    `[READY] Configure transfer parameters on the left and click 'Execute ${NATIVE_SYMBOL} Transfer'.`,
   ]);
+
+  // Keep terminal log updated reactively when signer address resolves
+  useEffect(() => {
+    if (effectiveAddress) {
+      setTerminalLogs((prev) => {
+        const withoutOldSigner = prev.filter((l) => !l.startsWith("[KEY] Active signer"));
+        return [
+          `[KEY] Active signer: ${effectiveAddress} (Native token: ${NATIVE_SYMBOL})`,
+          ...withoutOldSigner,
+        ];
+      });
+    }
+  }, [effectiveAddress]);
 
   const csvInputRef = useRef<HTMLInputElement>(null);
 
@@ -89,46 +161,92 @@ export function TransactionLabView({
     return () => unsub();
   }, []);
 
+  // Helper to resolve an active Signer dynamically if not yet loaded in props
+  async function resolveActiveSigner(): Promise<{ signer: any; address: string } | null> {
+    if (effectiveSigner && effectiveAddress) {
+      return { signer: effectiveSigner, address: effectiveAddress };
+    }
+
+    const raw = findBridgeKeyProvider();
+    if (!raw) return null;
+
+    try {
+      let accounts: string[] = await raw.request({ method: "eth_accounts" });
+      if (!accounts || accounts.length === 0) {
+        accounts = await raw.request({ method: "eth_requestAccounts" });
+      }
+
+      if (Array.isArray(accounts) && accounts.length > 0 && accounts[0]) {
+        const addr = accounts[0];
+        const p = new BrowserProvider(raw, "any");
+        const s = await p.getSigner(addr);
+        setLocalAddress(addr);
+        setLocalSigner(s);
+        const bal = await getLiveBalance(addr).catch(() => null);
+        if (bal) setLocalBalance(bal);
+        return { signer: s, address: addr };
+      }
+    } catch (err: any) {
+      console.warn("Could not acquire BridgeKey signer dynamically:", err);
+    }
+
+    return null;
+  }
+
   // Single Transfer Runner
   async function handleRunSingleTransfer() {
-    if (!signer) {
-      setSingleError("Please connect your Web3 wallet first.");
-      return;
-    }
     setSingleBusy(true);
     setSingleError(null);
     const eventId = `tx-${Date.now()}`;
     const time = new Date().toLocaleTimeString();
 
     try {
+      const resolved = await resolveActiveSigner();
+      if (!resolved || !resolved.signer) {
+        setSingleError("Please connect your BridgeKey wallet first.");
+        setSingleBusy(false);
+        return;
+      }
+
+      const activeSigner = resolved.signer;
+      const activeAddr = resolved.address;
+
       setTerminalLogs((prev) => [
-        `[${time}] [TX_INIT] Preparing transfer of ${amount} ETH to ${addressBook.resolve(recipient).label}…`,
+        `[${time}] [TX_INIT] Preparing transfer of ${amount} ${NATIVE_SYMBOL} to ${addressBook.resolve(recipient).label}…`,
         ...prev,
       ]);
 
       eventBus.emit({
         id: eventId,
-        from: clientAddress || "You",
+        from: activeAddr,
         to: recipient,
-        amount: `${amount} ETH`,
+        amount: `${amount} ${NATIVE_SYMBOL}`,
         type: "transfer",
         status: "signing",
         timestamp: time,
       });
 
-      const tx = await sendEth(signer, recipient, amount);
+      const overrides: Record<string, any> = {};
+      if (gasLimit && !isNaN(Number(gasLimit)) && Number(gasLimit) >= 21000) {
+        overrides.gasLimit = BigInt(gasLimit);
+      }
+      if (gasPriceGwei && !isNaN(Number(gasPriceGwei)) && Number(gasPriceGwei) > 0) {
+        overrides.gasPrice = parseUnits(gasPriceGwei, "gwei");
+      }
+
+      const tx = await sendEth(activeSigner, recipient, amount, overrides);
 
       setTerminalLogs((prev) => [
-        `[${time}] [TX_BROADCAST] Hash: ${tx.hash} (Awaiting 1 block confirmation)`,
+        `[${time}] [TX_BROADCAST] Hash: ${tx.hash} (Awaiting 1 block confirmation on MST Testnet)`,
         ...prev,
       ]);
 
       eventBus.emit({
         id: eventId,
         txHash: tx.hash,
-        from: clientAddress || "You",
+        from: activeAddr,
         to: recipient,
-        amount: `${amount} ETH`,
+        amount: `${amount} ${NATIVE_SYMBOL}`,
         type: "transfer",
         status: "pending",
         timestamp: time,
@@ -144,9 +262,9 @@ export function TransactionLabView({
       eventBus.emit({
         id: eventId,
         txHash: tx.hash,
-        from: clientAddress || "You",
+        from: activeAddr,
         to: recipient,
-        amount: `${amount} ETH`,
+        amount: `${amount} ${NATIVE_SYMBOL}`,
         type: "transfer",
         status: "confirmed",
         gasUsed: `${receipt?.gasUsed} gas`,
@@ -154,6 +272,8 @@ export function TransactionLabView({
         timestamp: time,
       });
 
+      // Refresh balance
+      getLiveBalance(activeAddr).then(setLocalBalance).catch(() => {});
       onRefresh();
     } catch (err: any) {
       const msg = err?.reason || err?.message || "Transaction failed";
@@ -165,9 +285,9 @@ export function TransactionLabView({
 
       eventBus.emit({
         id: eventId,
-        from: clientAddress || "You",
+        from: effectiveAddress || "You",
         to: recipient,
-        amount: `${amount} ETH`,
+        amount: `${amount} ${NATIVE_SYMBOL}`,
         type: "transfer",
         status: "failed",
         error: msg,
@@ -234,18 +354,13 @@ export function TransactionLabView({
     e.target.value = "";
   }
 
-  // Sequential Batch Execution (Feature 3: strictly sequential to prevent nonce collisions!)
+  // Sequential Batch Execution (strictly sequential to prevent nonce collisions!)
   async function handleExecuteBatch() {
-    if (!signer) {
-      setBatchError("Please connect wallet first.");
-      return;
-    }
-
     // Client-side validation
     for (let i = 0; i < batchItems.length; i++) {
       const item = batchItems[i];
       if (!/^0x[a-fA-F0-9]{40}$/.test(item.recipient.trim())) {
-        setBatchError(`Row ${i + 1} has invalid Ethereum address format`);
+        setBatchError(`Row ${i + 1} has invalid address format`);
         return;
       }
       if (isNaN(parseFloat(item.amount)) || parseFloat(item.amount) <= 0) {
@@ -254,14 +369,20 @@ export function TransactionLabView({
       }
     }
 
+    const resolved = await resolveActiveSigner();
+    if (!resolved || !resolved.signer) {
+      setBatchError("Please connect BridgeKey wallet first.");
+      return;
+    }
+
     setBatchError(null);
     setIsExecutingBatch(true);
     cancelBatchRef.current = false;
 
     try {
       const state = await executeBatchTransfers(
-        signer,
-        clientAddress || "You",
+        resolved.signer,
+        resolved.address,
         batchItems,
         {
           onRowUpdate: (index, updatedItem) => {
@@ -281,6 +402,7 @@ export function TransactionLabView({
         () => cancelBatchRef.current
       );
       setRunningGasCostWei(state.runningGasCostWei);
+      getLiveBalance(resolved.address).then(setLocalBalance).catch(() => {});
     } catch (err: any) {
       setBatchError(err?.message || "Batch execution error");
     } finally {
@@ -290,7 +412,7 @@ export function TransactionLabView({
   }
 
   // Summary Metrics for Batch
-  const totalQueuedEth = batchItems
+  const totalQueuedNative = batchItems
     .reduce((sum, b) => sum + (parseFloat(b.amount) || 0), 0)
     .toFixed(4);
   const totalSentCount = batchItems.filter((b) => b.status === "confirmed").length;
@@ -303,7 +425,7 @@ export function TransactionLabView({
         <div>
           <h2 className="text-lg font-bold text-primary tracking-tight">Transaction Lab</h2>
           <p className="text-xs text-secondary font-sans">
-            Real-time on-chain transfers, sequential batch operations, and live terminal receipt stream.
+            Real-time on-chain transfers, sequential batch operations, and live terminal receipt stream on MST Testnet.
           </p>
         </div>
 
@@ -345,12 +467,23 @@ export function TransactionLabView({
               </h3>
 
               <div>
-                <label className="text-secondary text-[11px] block mb-1">From Wallet</label>
+                <div className="flex justify-between items-center mb-1">
+                  <label className="text-secondary text-[11px] block">From Wallet</label>
+                  {effectiveAddress && (
+                    <span className="text-[10px] text-accent-green font-mono">
+                      {localBalance ? `${localBalance} ${NATIVE_SYMBOL}` : "Connected"}
+                    </span>
+                  )}
+                </div>
                 <input
                   type="text"
                   disabled
-                  value={clientAddress || "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266 (Connected)"}
-                  className="w-full bg-page border border-border rounded p-2 text-primary text-[11px]"
+                  value={
+                    effectiveAddress
+                      ? `${effectiveAddress} (${localBalance ? `${localBalance} ${NATIVE_SYMBOL}` : "Connected"})`
+                      : "Wallet not connected — Connect BridgeKey in top nav"
+                  }
+                  className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] font-mono"
                 />
               </div>
 
@@ -367,7 +500,7 @@ export function TransactionLabView({
                   value={recipient}
                   onChange={(e) => setRecipient(e.target.value)}
                   placeholder="0x..."
-                  className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] focus:outline-none focus:border-accent-blue"
+                  className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] focus:outline-none focus:border-accent-blue font-mono"
                 />
                 <div className="flex flex-wrap gap-1.5 mt-1.5">
                   {addressBookEntries.slice(0, 3).map((e) => (
@@ -385,12 +518,14 @@ export function TransactionLabView({
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-secondary text-[11px] block mb-1">Amount ({cfg.nativeToken})</label>
+                  <label className="text-secondary text-[11px] block mb-1">
+                    Amount ({NATIVE_SYMBOL})
+                  </label>
                   <input
                     type="text"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
-                    className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] focus:outline-none focus:border-accent-blue"
+                    className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] focus:outline-none focus:border-accent-blue font-mono"
                   />
                 </div>
 
@@ -400,7 +535,7 @@ export function TransactionLabView({
                     type="text"
                     value={gasLimit}
                     onChange={(e) => setGasLimit(e.target.value)}
-                    className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] focus:outline-none focus:border-accent-blue"
+                    className="w-full bg-page border border-border rounded p-2 text-primary text-[11px] focus:outline-none focus:border-accent-blue font-mono"
                   />
                 </div>
               </div>
@@ -422,7 +557,7 @@ export function TransactionLabView({
               </div>
 
               {singleError && (
-                <div className="p-2 rounded bg-red-50 border border-red-200 text-xs text-accent-red font-mono">
+                <div className="p-2 rounded bg-red-500/10 border border-red-500/30 text-xs text-accent-red font-mono">
                   {singleError}
                 </div>
               )}
@@ -430,22 +565,28 @@ export function TransactionLabView({
               <button
                 onClick={handleRunSingleTransfer}
                 disabled={singleBusy}
-                className="w-full py-2.5 rounded bg-accent-blue hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50"
+                className="w-full py-2.5 rounded bg-accent-blue hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
               >
                 <Send className="w-3.5 h-3.5" />
-                <span>{singleBusy ? "Broadcasting to Ledger..." : `Execute ${amount} ETH Transfer`}</span>
+                <span>
+                  {singleBusy
+                    ? "Broadcasting to Ledger..."
+                    : `Execute ${amount} ${NATIVE_SYMBOL} Transfer`}
+                </span>
               </button>
             </div>
           )}
 
-          {/* Mode 2: Batch Send (Feature 3) */}
+          {/* Mode 2: Batch Send */}
           {activeMode === "batch" && (
             <div className="space-y-4">
               {/* Batch Summary Bar */}
               <div className="p-3 rounded-lg bg-page border border-border grid grid-cols-5 gap-2 text-center text-[10px]">
                 <div>
                   <span className="text-muted block uppercase">Queued</span>
-                  <span className="font-bold text-primary text-xs">{totalQueuedEth} ETH</span>
+                  <span className="font-bold text-primary text-xs truncate block">
+                    {totalQueuedNative} {NATIVE_SYMBOL}
+                  </span>
                 </div>
                 <div>
                   <span className="text-muted block uppercase">Rows</span>
@@ -461,8 +602,13 @@ export function TransactionLabView({
                 </div>
                 <div>
                   <span className="text-muted block uppercase">Gas Cost</span>
-                  <span className="font-bold text-primary text-xs truncate block" title={`${runningGasCostWei.toString()} wei`}>
-                    {runningGasCostWei > 0n ? `${formatEther(runningGasCostWei).slice(0, 7)} ETH` : "0.00 ETH"}
+                  <span
+                    className="font-bold text-primary text-xs truncate block"
+                    title={`${runningGasCostWei.toString()} wei`}
+                  >
+                    {runningGasCostWei > 0n
+                      ? `${formatEther(runningGasCostWei).slice(0, 7)} ${NATIVE_SYMBOL}`
+                      : `0.00 ${NATIVE_SYMBOL}`}
                   </span>
                 </div>
               </div>
@@ -482,14 +628,14 @@ export function TransactionLabView({
                   />
                   <button
                     onClick={() => csvInputRef.current?.click()}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-page hover:bg-gray-100 text-xs text-secondary"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded border border-border bg-page hover:bg-gray-100 text-xs text-secondary cursor-pointer"
                   >
                     <Upload className="w-3 h-3" />
                     <span>CSV</span>
                   </button>
                   <button
                     onClick={handleAddBatchRow}
-                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-page border border-border hover:border-accent-blue text-xs text-primary"
+                    className="flex items-center gap-1 px-2.5 py-1 rounded bg-page border border-border hover:border-accent-blue text-xs text-primary cursor-pointer"
                   >
                     <Plus className="w-3 h-3" />
                     <span>Add Row</span>
@@ -520,7 +666,7 @@ export function TransactionLabView({
                         <button
                           disabled={isExecutingBatch}
                           onClick={() => handleRemoveBatchRow(item.id)}
-                          className="text-muted hover:text-accent-red"
+                          className="text-muted hover:text-accent-red cursor-pointer"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
@@ -534,7 +680,7 @@ export function TransactionLabView({
                         onChange={(e) => handleUpdateBatchRow(item.id, "recipient", e.target.value)}
                         placeholder="Recipient address (0x...)"
                         disabled={isExecutingBatch || item.status === "confirmed"}
-                        className="col-span-2 bg-card border border-border rounded px-2 py-1 text-[11px] text-primary focus:outline-none focus:border-accent-blue disabled:opacity-60"
+                        className="col-span-2 bg-card border border-border rounded px-2 py-1 text-[11px] text-primary focus:outline-none focus:border-accent-blue disabled:opacity-60 font-mono"
                       />
                       <input
                         type="text"
@@ -542,7 +688,7 @@ export function TransactionLabView({
                         onChange={(e) => handleUpdateBatchRow(item.id, "amount", e.target.value)}
                         placeholder="Amount"
                         disabled={isExecutingBatch || item.status === "confirmed"}
-                        className="bg-card border border-border rounded px-2 py-1 text-[11px] text-primary focus:outline-none focus:border-accent-blue disabled:opacity-60"
+                        className="bg-card border border-border rounded px-2 py-1 text-[11px] text-primary focus:outline-none focus:border-accent-blue disabled:opacity-60 font-mono"
                       />
                     </div>
                   </div>
@@ -550,7 +696,7 @@ export function TransactionLabView({
               </div>
 
               {batchError && (
-                <div className="p-2 rounded bg-red-50 border border-red-200 text-[11px] text-accent-red">
+                <div className="p-2 rounded bg-red-500/10 border border-red-500/30 text-[11px] text-accent-red">
                   {batchError}
                 </div>
               )}
@@ -559,13 +705,13 @@ export function TransactionLabView({
                 <button
                   disabled={isExecutingBatch || batchItems.length === 0}
                   onClick={handleExecuteBatch}
-                  className="flex-1 py-2.5 rounded bg-accent-blue hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50"
+                  className="flex-1 py-2.5 rounded bg-accent-blue hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-sm disabled:opacity-50 cursor-pointer"
                 >
                   <Send className="w-3.5 h-3.5" />
                   <span>
                     {isExecutingBatch
                       ? "Executing Sequential Transfers..."
-                      : `Execute Batch (${batchItems.length} Transfers · ${totalQueuedEth} ETH)`}
+                      : `Execute Batch (${batchItems.length} Transfers · ${totalQueuedNative} ${NATIVE_SYMBOL})`}
                   </span>
                 </button>
                 {isExecutingBatch && (
@@ -577,7 +723,7 @@ export function TransactionLabView({
                         ...prev,
                       ]);
                     }}
-                    className="px-3.5 py-2.5 rounded bg-accent-red hover:bg-red-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors"
+                    className="px-3.5 py-2.5 rounded bg-accent-red hover:bg-red-600 text-white font-bold text-xs flex items-center gap-1.5 shadow-sm transition-colors cursor-pointer"
                     title="Stop submitting remaining transactions"
                   >
                     <StopCircle className="w-3.5 h-3.5" />

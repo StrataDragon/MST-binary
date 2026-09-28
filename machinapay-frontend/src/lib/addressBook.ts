@@ -10,15 +10,8 @@ export interface AddressBookEntry {
 
 const STORAGE_KEY = "machinapay_address_book_v1";
 
-// Pre-seeded well-known addresses from deployed contracts and Hardhat node
+// Pre-seeded well-known addresses from deployed contracts and testnet machines
 const DEFAULT_ENTRIES: AddressBookEntry[] = [
-  {
-    address: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266".toLowerCase(),
-    label: "Deployer / Client Wallet",
-    tag: "client",
-    notes: "Default account #0 on Hardhat local node",
-    createdAt: Date.now(),
-  },
   {
     address: "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1".toLowerCase(),
     label: "Machine M-042 Agent",
@@ -27,10 +20,10 @@ const DEFAULT_ENTRIES: AddressBookEntry[] = [
     createdAt: Date.now(),
   },
   {
-    address: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8".toLowerCase(),
-    label: "Demo Customer Account",
-    tag: "client",
-    notes: "Default account #1 on local node",
+    address: "0x8b31a3194B270c3F16f1a8eF963ff0d55998A7c9".toLowerCase(),
+    label: "Drone Unit #09 Agent",
+    tag: "machine",
+    notes: "Aerial sensor telemetry agent wallet",
     createdAt: Date.now(),
   },
   {
