@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { BrowserProvider } from "ethers";
+import { useLogin, usePrivy, useWallets } from "@privy-io/react-auth";
 import {
   connectWallet,
   findBridgeKeyProviderAsync,
@@ -19,6 +20,7 @@ import {
   ChevronUp,
   RefreshCw,
   ShieldCheck,
+  LogIn,
 } from "lucide-react";
 
 export function ConnectWallet({
@@ -30,16 +32,20 @@ export function ConnectWallet({
   clientAddress?: string | null;
   onDisconnect?: () => void;
 }) {
+  const { ready: privyReady, authenticated: privyAuthenticated } = usePrivy();
+  const { login: privyLogin } = useLogin();
+  const { wallets } = useWallets();
+
   const [address, setAddress] = useState<string | null>(clientAddress || null);
   const [balance, setBalance] = useState<string>("0.0000");
   const [walletName, setWalletName] = useState<string>("BridgeKey");
-  const [error, setError] = useState<{ message: string; isNoProvider: boolean } | null>(null);
+  const [error, setError] = useState<{ message: string; isNoProvider?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showDetails, setShowDetails] = useState(false);
   const [rpcResponding, setRpcResponding] = useState(true);
 
-  // Synchronize internal address with clientAddress prop
+  // Sync internal address with clientAddress prop from parent
   useEffect(() => {
     if (clientAddress !== undefined) {
       setAddress(clientAddress);
@@ -69,7 +75,44 @@ export function ConnectWallet({
     };
   }, []);
 
-  // Auto-detect existing authorized session on mount or when BridgeKey initializes
+  // Auto-connect Privy wallet when authenticated
+  useEffect(() => {
+    let mounted = true;
+    async function syncPrivyWallet() {
+      if (!privyAuthenticated || !wallets || wallets.length === 0) return;
+      if (address) return; // already connected
+
+      const privyWallet =
+        wallets.find(
+          (w) => w.walletClientType === "privy" || w.walletClientType === "privy-v2"
+        ) || wallets[0];
+
+      if (privyWallet && mounted) {
+        try {
+          const ethereumProvider = await privyWallet.getEthereumProvider();
+          const provider = new BrowserProvider(ethereumProvider, "any");
+          const signer = await provider.getSigner();
+          const userAddress = await signer.getAddress();
+          if (mounted) {
+            setAddress(userAddress);
+            setWalletName("Privy Wallet");
+            onConnected(userAddress, signer);
+            const b = await getLiveBalance(userAddress);
+            setBalance(b);
+          }
+        } catch (e: any) {
+          console.warn("Privy auto-sync warning:", e);
+        }
+      }
+    }
+
+    syncPrivyWallet();
+    return () => {
+      mounted = false;
+    };
+  }, [privyAuthenticated, wallets, address]);
+
+  // Auto-detect existing authorized session for BridgeKey on mount
   useEffect(() => {
     let mounted = true;
 
@@ -112,13 +155,12 @@ export function ConnectWallet({
         const raw = findBridgeKeyProvider();
         if (raw) {
           const provider = new BrowserProvider(raw, "any");
-          provider.getSigner(newAddr).then((s) => {
-            if (mounted) onConnected(newAddr, s);
-          }).catch(() => {
-            provider.getSigner().then((s) => {
+          provider
+            .getSigner(newAddr)
+            .then((s) => {
               if (mounted) onConnected(newAddr, s);
-            }).catch(() => {});
-          });
+            })
+            .catch(() => {});
         }
         getLiveBalance(newAddr).then((b) => {
           if (mounted) setBalance(b);
@@ -136,7 +178,6 @@ export function ConnectWallet({
       raw.on("chainChanged", handleChainChanged);
     }
 
-    // Also listen to custom initialization events from BridgeKey
     const handleInitialized = () => {
       checkExistingAuth();
     };
@@ -154,7 +195,8 @@ export function ConnectWallet({
     };
   }, []);
 
-  async function handleConnect() {
+  // Connect via BridgeKey
+  async function handleConnectBridgeKey() {
     setBusy(true);
     setError(null);
     try {
@@ -175,6 +217,47 @@ export function ConnectWallet({
       setError({
         message: e?.message || "Could not connect BridgeKey wallet",
         isNoProvider,
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Connect via Privy (Google/Email)
+  async function handleConnectPrivy() {
+    setBusy(true);
+    setError(null);
+    try {
+      if (!privyAuthenticated) {
+        privyLogin();
+        setBusy(false);
+        return;
+      }
+
+      const wallet =
+        wallets.find(
+          (w) => w.walletClientType === "privy" || w.walletClientType === "privy-v2"
+        ) || wallets[0];
+
+      if (!wallet) {
+        throw new Error("Privy embedded wallet not ready. Please try logging in again.");
+      }
+
+      const ethereumProvider = await wallet.getEthereumProvider();
+      const provider = new BrowserProvider(ethereumProvider, "any");
+      const signer = await provider.getSigner();
+      const userAddress = await signer.getAddress();
+
+      setAddress(userAddress);
+      setWalletName("Privy Wallet");
+      onConnected(userAddress, signer);
+
+      const bal = await getLiveBalance(userAddress);
+      setBalance(bal);
+    } catch (e: any) {
+      console.error("Privy connection failed:", e);
+      setError({
+        message: e?.message || "Could not connect your Privy wallet",
       });
     } finally {
       setBusy(false);
@@ -202,7 +285,7 @@ export function ConnectWallet({
           <button
             onClick={() => setShowDetails(!showDetails)}
             className="flex items-center gap-2 rounded-full border border-cyan-500/30 bg-cyan-950/40 px-3 py-1 text-xs font-mono text-cyan-300 hover:border-cyan-400 transition shadow-xs cursor-pointer"
-            title="Click to view BridgeKey verification checklist and connection details"
+            title="Click to view wallet verification checklist and connection details"
           >
             <span className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
             <span className="font-semibold text-white">{cfg.network}</span>
@@ -229,7 +312,7 @@ export function ConnectWallet({
             <div className="flex items-center justify-between border-b border-gray-800 pb-2">
               <span className="font-semibold text-white flex items-center gap-1.5">
                 <ShieldCheck className="w-4 h-4 text-cyan-400" />
-                BridgeKey Status
+                Wallet Status
               </span>
               <button
                 onClick={refreshBalance}
@@ -323,13 +406,26 @@ export function ConnectWallet({
         )
       )}
 
+      {/* BridgeKey Connect Button */}
       <button
-        onClick={handleConnect}
+        onClick={handleConnectBridgeKey}
         disabled={busy}
-        className="flex items-center gap-1.5 rounded-full bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-1.5 text-xs font-mono font-semibold shadow-xs transition disabled:opacity-50 cursor-pointer"
+        className="flex items-center gap-1.5 rounded-full bg-cyan-600 hover:bg-cyan-500 text-white px-3.5 py-1.5 text-xs font-mono font-semibold shadow-xs transition disabled:opacity-50 cursor-pointer"
+        title="Connect using BridgeKey extension or injected Web3 provider"
       >
         <Wallet className="w-3.5 h-3.5" />
-        <span>{busy ? "Connecting..." : "Connect BridgeKey"}</span>
+        <span>{busy ? "Connecting..." : "BridgeKey"}</span>
+      </button>
+
+      {/* Privy Social / Email Login Button */}
+      <button
+        onClick={handleConnectPrivy}
+        disabled={busy || !privyReady}
+        className="flex items-center gap-1.5 rounded-full bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 py-1.5 text-xs font-mono font-semibold shadow-xs transition disabled:opacity-50 cursor-pointer"
+        title="Login with Google or Email using Privy embedded wallet"
+      >
+        <LogIn className="w-3.5 h-3.5" />
+        <span>{privyAuthenticated ? "Privy Wallet" : "Privy Login"}</span>
       </button>
     </div>
   );
