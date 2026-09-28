@@ -1,5 +1,7 @@
+import { NATIVE_SYMBOL } from "./config";
+
 export interface UserSettings {
-  primaryCurrency: "ETH" | "USD";
+  primaryCurrency: string;
   gasPreference: "slow" | "standard" | "fast";
   confirmationThreshold: number;
   displayDensity: "comfortable" | "compact";
@@ -11,7 +13,7 @@ export interface UserSettings {
 const SETTINGS_KEY = "machinapay_user_settings_v1";
 
 const DEFAULT_SETTINGS: UserSettings = {
-  primaryCurrency: "ETH",
+  primaryCurrency: NATIVE_SYMBOL,
   gasPreference: "standard",
   confirmationThreshold: 1,
   displayDensity: "comfortable",

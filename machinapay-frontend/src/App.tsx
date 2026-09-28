@@ -5,7 +5,7 @@ import { TopNav } from "./components/TopNav";
 import { OverviewView } from "./components/OverviewView";
 import { WalletMapView } from "./components/WalletMapView";
 import { TransactionLabView } from "./components/TransactionLabView";
-import { SettlementTestingView } from "./components/SettlementTestingView";
+import { SettlementAnalyticsView } from "./components/SettlementAnalyticsView";
 import { AlertsFeed } from "./components/AlertsFeed";
 import { ReportsView } from "./components/ReportsView";
 import { TransactionHistoryTable, TxHistoryItem } from "./components/TransactionHistoryTable";
@@ -19,14 +19,9 @@ import { JobDetail } from "./components/JobDetail";
 import { JobSummary } from "./components/JobList";
 import { MarketplaceView } from "./components/MarketplaceView";
 import { DynamicPricingDashboard } from "./components/DynamicPricingDashboard";
-import { TransportJobModal } from "./components/TransportJobModal";
-import { ColorSortingJobModal } from "./components/ColorSortingJobModal";
-import { TransportSimulationView } from "./components/TransportSimulationView";
-import { ColorSortingSimulationView } from "./components/ColorSortingSimulationView";
-import { JobPriceCalculation } from "./lib/pricingEngine";
 import { getReadProvider, getEscrow, getLiveBalance } from "./lib/wallet";
-import { cfg } from "./lib/config";
-import { X, Sparkles } from "lucide-react";
+import { cfg, NATIVE_SYMBOL } from "./lib/config";
+import { X } from "lucide-react";
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<SentinelTab>("marketplace");
@@ -39,15 +34,6 @@ export default function App() {
   const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateModal, setShowCreateModal] = useState(false);
-
-  // Autonomous Jobs & Marketplace state
-  const [showTransportModal, setShowTransportModal] = useState(false);
-  const [showColorSortingModal, setShowColorSortingModal] = useState(false);
-  const [activeSimulation, setActiveSimulation] = useState<{
-    type: "transport" | "color";
-    jobId: string;
-    amount: string;
-  } | null>(null);
 
   // Load all jobs from chain
   async function loadJobs() {
@@ -96,29 +82,57 @@ export default function App() {
     }
   }
 
+  // Purely event-driven: Initial load + reactive event listeners (NO setInterval)
   useEffect(() => {
     loadJobs();
-    const t = setInterval(loadJobs, 5000);
-    return () => clearInterval(t);
-  }, []);
-
-  useEffect(() => {
     loadBalance();
-    const t = setInterval(loadBalance, 5000);
-    return () => clearInterval(t);
+
+    try {
+      const provider = getReadProvider();
+      const escrow = getEscrow(provider);
+
+      const handleEvent = () => {
+        loadJobs();
+        loadBalance();
+      };
+
+      escrow.on("JobCreated", handleEvent);
+      escrow.on("JobFunded", handleEvent);
+      escrow.on("JobAccepted", handleEvent);
+      escrow.on("JobExecutionStarted", handleEvent);
+      escrow.on("ProofSubmitted", handleEvent);
+      escrow.on("VerificationSubmitted", handleEvent);
+      escrow.on("JobVerified", handleEvent);
+      escrow.on("PaymentReleased", handleEvent);
+      escrow.on("JobRefunded", handleEvent);
+
+      return () => {
+        escrow.off("JobCreated", handleEvent);
+        escrow.off("JobFunded", handleEvent);
+        escrow.off("JobAccepted", handleEvent);
+        escrow.off("JobExecutionStarted", handleEvent);
+        escrow.off("ProofSubmitted", handleEvent);
+        escrow.off("VerificationSubmitted", handleEvent);
+        escrow.off("JobVerified", handleEvent);
+        escrow.off("PaymentReleased", handleEvent);
+        escrow.off("JobRefunded", handleEvent);
+      };
+    } catch (err) {
+      console.warn("Could not register escrow event listeners in App:", err);
+    }
   }, [address]);
 
   // Derived metrics
   const activeJobsCount = jobs.filter((j) => j.state >= 1 && j.state <= 5).length;
   const paidJobsCount = jobs.filter((j) => j.state === 6).length;
-  const totalLockedEth = jobs
+  const totalLocked = jobs
     .filter((j) => j.state >= 1 && j.state <= 5)
     .reduce((sum, j) => sum + Number(j.reward || 0), 0)
     .toFixed(2);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-[#F5F6F8] text-[#111827] font-sans antialiased">
-      {/* 1. Left Sidebar Navigation (SENTINEL Style) */}
+      {/* 1. Left Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}
         onSelectTab={setCurrentTab}
@@ -147,76 +161,38 @@ export default function App() {
 
         {/* Page Content Container */}
         <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
-          {/* TAB: MARKETPLACE (Dual Machine Fleet M-042 and M-051 with Dynamic Pricing) */}
+          {/* TAB: MARKETPLACE */}
           {currentTab === "marketplace" && (
-            <div className="space-y-6">
-              <MarketplaceView
-                onHireTransport={() => setShowTransportModal(true)}
-                onHireColorSorting={() => setShowColorSortingModal(true)}
-                onOpenPricingDashboard={() => setCurrentTab("pricing")}
-              />
-
-              {/* Active Simulation Execution Chamber if hired */}
-              {activeSimulation && (
-                <div className="pt-6 border-t border-[#1E1E24] space-y-4">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h3 className="text-sm font-bold uppercase tracking-wider text-white">
-                        Active Machine Execution Chamber
-                      </h3>
-                      <p className="text-xs text-[#9CA3AF]">
-                        Live hardware simulation connected to on-chain JobEscrow ({activeSimulation.jobId.slice(0, 10)}…)
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => setActiveSimulation(null)}
-                      className="px-3 py-1.5 rounded-lg border border-[#1E1E24] bg-white/5 hover:bg-white/10 text-xs text-[#9CA3AF] hover:text-white transition-colors"
-                    >
-                      Hide Execution Chamber
-                    </button>
-                  </div>
-
-                  {activeSimulation.type === "transport" ? (
-                    <TransportSimulationView
-                      jobId={activeSimulation.jobId}
-                      lockedAmountMst={activeSimulation.amount}
-                      onSettled={() => {
-                        loadJobs();
-                        loadBalance();
-                      }}
-                    />
-                  ) : (
-                    <ColorSortingSimulationView
-                      jobId={activeSimulation.jobId}
-                      lockedAmountMst={activeSimulation.amount}
-                      onSettled={() => {
-                        loadJobs();
-                        loadBalance();
-                      }}
-                    />
-                  )}
-                </div>
-              )}
-            </div>
+            <MarketplaceView
+              signer={signer}
+              clientAddress={address}
+              onOpenPricingDashboard={() => setCurrentTab("pricing")}
+              onJobCreated={(jobId) => {
+                setSelectedJob(jobId);
+                loadJobs();
+                loadBalance();
+                setCurrentTab("wallet-map");
+              }}
+            />
           )}
 
-          {/* TAB: DYNAMIC PRICING DASHBOARD (Side-by-side comparison of Transport vs Color Sorting) */}
+          {/* TAB: DYNAMIC PRICING DASHBOARD */}
           {currentTab === "pricing" && (
             <DynamicPricingDashboard />
           )}
 
-          {/* TAB 1: OVERVIEW (SENTINEL Stat Tiles + 30d Trajectory + Machine Breakdown) */}
+          {/* TAB: OVERVIEW */}
           {currentTab === "overview" && (
             <OverviewView
               jobs={jobs}
-              tvl={totalLockedEth === "0.00" && jobs.length > 0 ? jobs[0].reward : totalLockedEth}
+              tvl={totalLocked === "0.00" && jobs.length > 0 ? jobs[0].reward : totalLocked}
               activeJobsCount={activeJobsCount}
               paidJobsCount={paidJobsCount}
               clientBalance={clientBalance}
             />
           )}
 
-          {/* TAB 2: WALLET MAP (SENTINEL Hospital Map with interactive nodes & ETH transfer) */}
+          {/* TAB: WALLET MAP */}
           {currentTab === "wallet-map" && (
             <WalletMapView
               signer={signer}
@@ -229,7 +205,7 @@ export default function App() {
             />
           )}
 
-          {/* TAB 3: TRANSACTION HISTORY (Paginated table + filters + drawer) */}
+          {/* TAB: TRANSACTION HISTORY */}
           {currentTab === "tx-history" && (
             <TransactionHistoryTable
               clientAddress={address}
@@ -237,7 +213,7 @@ export default function App() {
             />
           )}
 
-          {/* TAB 4: TRANSACTION LAB (SENTINEL Simulation Lab with transfer params & terminal log) */}
+          {/* TAB: TRANSACTION LAB */}
           {currentTab === "transaction-lab" && (
             <TransactionLabView
               signer={signer}
@@ -250,91 +226,87 @@ export default function App() {
             />
           )}
 
-          {/* TAB 5: SETTLEMENT TESTING (SENTINEL Policy Testing with radar cards & trajectory) */}
-          {currentTab === "settlement-testing" && (
-            <SettlementTestingView />
+          {/* TAB: SETTLEMENT ANALYTICS */}
+          {(currentTab === "settlement-analytics" || currentTab === "settlement-testing") && (
+            <SettlementAnalyticsView />
           )}
 
-          {/* TAB 6: ALERTS (Real client-side alerts feed) */}
+          {/* TAB: ALERTS */}
           {currentTab === "alerts" && (
             <AlertsFeed
-              onNavigateToTx={(txHash) => {
-                setSelectedTx({
-                  id: txHash,
-                  txHash,
-                  timestamp: "Recent",
-                  timeMillis: Date.now(),
-                  direction: "out",
-                  counterparty: address || "0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225",
-                  amountEth: "1.00",
-                  status: "confirmed",
-                  gasUsed: "21,000 gas",
-                  blockNumber: 1,
-                });
-              }}
-              onNavigateToWallet={() => {
-                setCurrentTab("wallet-map");
+              onNavigateToTx={() => {
+                setCurrentTab("tx-history");
               }}
             />
           )}
 
-          {/* TAB 7: ADDRESS BOOK (Entity registry with CRUD and JSON import/export) */}
+          {/* TAB: REPORTS */}
+          {currentTab === "reports" && (
+            <ReportsView
+              jobs={jobs}
+              tvl={totalLocked}
+            />
+          )}
+
+          {/* TAB: ADDRESS BOOK */}
           {currentTab === "address-book" && (
             <AddressBookPanel />
           )}
 
-          {/* TAB 8: REPORTS (Full settlement report with stats summary & CSV export) */}
-          {currentTab === "reports" && (
-            <ReportsView
-              jobs={jobs}
-              tvl={totalLockedEth === "0.00" && jobs.length > 0 ? jobs[0].reward : totalLockedEth}
-            />
-          )}
-
-          {/* TAB 9: ESCROW CONTRACTS */}
+          {/* TAB: ESCROW CONTRACTS */}
           {currentTab === "contracts" && (
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <MachinePanel />
-              <div className="bg-card border border-border rounded-lg shadow-sm p-5 space-y-4">
-                <div className="flex items-center justify-between border-b border-border pb-3">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-primary font-mono">
-                    JobEscrow Specification
-                  </h3>
-                  <button
-                    onClick={() => setShowCreateModal(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-accent-blue hover:bg-blue-600 text-white text-xs font-semibold font-mono shadow-xs"
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Post Job</span>
-                  </button>
+            <div className="bg-white border border-gray-200 rounded-xl shadow-xs p-6 space-y-4">
+              <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+                <div>
+                  <h2 className="text-base font-bold text-gray-900">Deployed Escrow Smart Contracts</h2>
+                  <p className="text-xs text-gray-500">
+                    Network: {cfg.network} (Chain ID {cfg.chainId})
+                  </p>
+                </div>
+              </div>
+
+              <div className="space-y-3 font-mono text-xs">
+                <div className="p-4 rounded-lg bg-[#f6f7f9] border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-gray-900">JobEscrow Contract</div>
+                    <div className="text-gray-500 text-[11px]">Primary autonomous commerce escrow vault</div>
+                  </div>
+                  <div className="px-2.5 py-1 rounded bg-white border border-gray-200 text-gray-800 text-xs">
+                    {cfg.addresses.JobEscrow}
+                  </div>
                 </div>
 
-                <div className="text-xs text-secondary space-y-3 font-mono leading-relaxed">
-                  <p>
-                    Autonomous machines register in <span className="text-primary font-semibold">MachineRegistry.sol</span> with a mandatory staked collateral in native coin.
-                  </p>
-                  <p>
-                    Hardware identities execute cryptographic proof generation on-board using ECDSA secp256k1 keys. The verifier validates the proof against on-chain escrow parameters before countersigning.
-                  </p>
-                  <div className="p-3 rounded-lg bg-page border border-border text-[11px] text-accent-green space-y-1">
-                    <div>Machine ID: M-042</div>
-                    <div>Hardware Architecture: Autonomous Ground Transport</div>
-                    <div>Staked Deposit: 0.01 MST</div>
-                    <div>EIP-712 Compatibility: MachinaPayProof v1.0</div>
+                <div className="p-4 rounded-lg bg-[#f6f7f9] border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-gray-900">MachineRegistry Contract</div>
+                    <div className="text-gray-500 text-[11px]">Registry of authorized autonomous robots & arms</div>
+                  </div>
+                  <div className="px-2.5 py-1 rounded bg-white border border-gray-200 text-gray-800 text-xs">
+                    {cfg.addresses.MachineRegistry}
+                  </div>
+                </div>
+
+                <div className="p-4 rounded-lg bg-[#f6f7f9] border border-gray-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="font-bold text-gray-900">Trusted Verifier Address</div>
+                    <div className="text-gray-500 text-[11px]">Sole authorized cryptographic verifier</div>
+                  </div>
+                  <div className="px-2.5 py-1 rounded bg-white border border-gray-200 text-gray-800 text-xs">
+                    {cfg.verifier}
                   </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* TAB 10: SETTINGS (Gas preferences, confirmation threshold, density, currency) */}
+          {/* TAB: SETTINGS */}
           {currentTab === "settings" && (
             <SettingsView />
           )}
         </main>
       </div>
 
-      {/* Transaction Detail Drawer Modal */}
+      {/* Selected Transaction Inspector Drawer */}
       {selectedTx && (
         <NodeInspectorModal
           txData={selectedTx}
@@ -342,20 +314,20 @@ export default function App() {
         />
       )}
 
-      {/* Post Escrow Job Modal */}
+      {/* Deploy Job Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-xs animate-fade-in">
-          <div className="w-full max-w-lg rounded-lg border border-border bg-card shadow-xl p-6 relative">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
+          <div className="bg-white border border-gray-200 rounded-xl shadow-xl max-w-lg w-full p-6 relative">
             <button
               onClick={() => setShowCreateModal(false)}
-              className="absolute top-4 right-4 p-1.5 rounded-lg text-secondary hover:text-primary hover:bg-page transition-colors"
+              className="absolute top-4 right-4 p-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-100 transition-colors"
             >
               <X className="w-5 h-5" />
             </button>
             <div className="mb-4">
-              <h2 className="text-base font-bold text-primary tracking-tight">Deploy Escrow Job</h2>
-              <p className="text-xs text-secondary">
-                Lock native funds into JobEscrow to dispatch autonomous machine M-042.
+              <h2 className="text-base font-bold text-gray-900 tracking-tight">Deploy Escrow Job</h2>
+              <p className="text-xs text-gray-500">
+                Lock native funds into JobEscrow to dispatch an autonomous machine.
               </p>
             </div>
             <CreateJobForm
@@ -364,49 +336,12 @@ export default function App() {
                 setShowCreateModal(false);
                 setSelectedJob(jobId);
                 loadJobs();
+                loadBalance();
                 setCurrentTab("overview");
               }}
             />
           </div>
         </div>
-      )}
-
-      {/* Transport Job Creation & Dynamic Pricing Modal */}
-      {showTransportModal && (
-        <TransportJobModal
-          signer={signer}
-          isOpen={showTransportModal}
-          onClose={() => setShowTransportModal(false)}
-          onJobCreated={(jobId, calc) => {
-            setSelectedJob(jobId);
-            setActiveSimulation({
-              type: "transport",
-              jobId,
-              amount: calc.finalPrice.toString(),
-            });
-            setCurrentTab("marketplace");
-            loadJobs();
-          }}
-        />
-      )}
-
-      {/* Color Sorting Job Creation & Dynamic Pricing Modal */}
-      {showColorSortingModal && (
-        <ColorSortingJobModal
-          signer={signer}
-          isOpen={showColorSortingModal}
-          onClose={() => setShowColorSortingModal(false)}
-          onJobCreated={(jobId, calc) => {
-            setSelectedJob(jobId);
-            setActiveSimulation({
-              type: "color",
-              jobId,
-              amount: calc.finalPrice.toString(),
-            });
-            setCurrentTab("marketplace");
-            loadJobs();
-          }}
-        />
       )}
     </div>
   );

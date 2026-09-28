@@ -74,7 +74,7 @@ export const alertManager = {
     const list = this.getAll();
     const newAlert: SystemAlert = {
       ...alert,
-      id: `alert-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: `alert-${Date.now()}-${list.length + 1}`,
       timestamp: "Just now",
       timeMillis: Date.now(),
       read: false,

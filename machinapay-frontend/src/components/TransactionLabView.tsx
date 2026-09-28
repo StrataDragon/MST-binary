@@ -215,7 +215,7 @@ export function TransactionLabView({
           const amt = parts[1].trim();
           if (rec.startsWith("0x")) {
             parsed.push({
-              id: `b-${Date.now()}-${Math.random()}`,
+              id: `b-${Date.now()}-${parsed.length}`,
               recipient: rec,
               amount: amt,
               status: "idle",

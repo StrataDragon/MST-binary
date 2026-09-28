@@ -35,9 +35,12 @@ export function useLiveBalance(address: string | null, pollIntervalMs = 6000) {
 
   useEffect(() => {
     fetchBalance();
-    const timer = setInterval(fetchBalance, pollIntervalMs);
-    return () => clearInterval(timer);
-  }, [fetchBalance, pollIntervalMs]);
+    const provider = getReadProvider();
+    provider.on("block", fetchBalance);
+    return () => {
+      provider.off("block", fetchBalance);
+    };
+  }, [fetchBalance]);
 
   return { balance, isLoading, error, refresh: fetchBalance };
 }

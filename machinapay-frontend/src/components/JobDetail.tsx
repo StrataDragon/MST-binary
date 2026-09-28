@@ -22,8 +22,24 @@ export function JobDetail({ jobId, signer }: { jobId: string; signer: any }) {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 4000);
-    return () => clearInterval(t);
+    const provider = getReadProvider();
+    const escrow = getEscrow(provider);
+
+    escrow.on("JobAccepted", load);
+    escrow.on("JobExecutionStarted", load);
+    escrow.on("ProofSubmitted", load);
+    escrow.on("VerificationSubmitted", load);
+    escrow.on("PaymentReleased", load);
+    escrow.on("JobRefunded", load);
+
+    return () => {
+      escrow.off("JobAccepted", load);
+      escrow.off("JobExecutionStarted", load);
+      escrow.off("ProofSubmitted", load);
+      escrow.off("VerificationSubmitted", load);
+      escrow.off("PaymentReleased", load);
+      escrow.off("JobRefunded", load);
+    };
   }, [jobId]);
 
   function pushLog(line: string) {

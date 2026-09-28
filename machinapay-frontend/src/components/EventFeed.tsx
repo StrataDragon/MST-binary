@@ -51,7 +51,7 @@ export function EventFeed() {
     } catch {
       /* fall back to raw name */
     }
-    return { key: `${log.transactionHash}-${log.index ?? Math.random()}`, text };
+    return { key: `${log.transactionHash}-${log.index ?? log.data ?? Date.now()}`, text };
   }
 
   function short(id: string) {

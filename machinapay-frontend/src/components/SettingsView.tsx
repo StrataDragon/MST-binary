@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { Settings, Save, Check, RefreshCw } from "lucide-react";
 import { settingsStore, UserSettings } from "../lib/settings";
-import { cfg } from "../lib/config";
+import { cfg, NATIVE_SYMBOL } from "../lib/config";
 
 export function SettingsView() {
   const [settings, setSettings] = useState<UserSettings>(settingsStore.get());
@@ -45,10 +45,10 @@ export function SettingsView() {
         <div className="p-4 rounded-lg bg-page border border-border space-y-2">
           <label className="text-xs font-bold text-primary block">Primary Currency Display</label>
           <p className="text-[11px] text-secondary font-sans leading-relaxed">
-            Choose whether cryptocurrency figures across statistics, tables, and transfer forms display primary values in ETH or USD.
+            Choose whether cryptocurrency figures across statistics, tables, and transfer forms display primary values in {NATIVE_SYMBOL} or USD.
           </p>
           <div className="flex gap-3 pt-1">
-            {(["ETH", "USD"] as const).map((curr) => (
+            {([NATIVE_SYMBOL, "USD"] as const).map((curr) => (
               <label
                 key={curr}
                 className={`flex items-center gap-2 px-3 py-1.5 rounded border cursor-pointer ${

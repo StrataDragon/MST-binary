@@ -60,8 +60,22 @@ export function JobList({ selected, onSelect }: { selected: string | null; onSel
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 6000);
-    return () => clearInterval(t);
+    const provider = getReadProvider();
+    const escrow = getEscrow(provider);
+
+    escrow.on("JobCreated", load);
+    escrow.on("JobFunded", load);
+    escrow.on("JobAccepted", load);
+    escrow.on("PaymentReleased", load);
+    escrow.on("JobRefunded", load);
+
+    return () => {
+      escrow.off("JobCreated", load);
+      escrow.off("JobFunded", load);
+      escrow.off("JobAccepted", load);
+      escrow.off("PaymentReleased", load);
+      escrow.off("JobRefunded", load);
+    };
   }, []);
 
   return (

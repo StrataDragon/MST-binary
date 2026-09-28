@@ -18,6 +18,20 @@ export interface MachinaPayConfig {
 }
 
 export const cfg = raw as unknown as MachinaPayConfig;
+export const NATIVE_SYMBOL = cfg.nativeToken || "ETH";
+
+export function getContractConfig() {
+  return {
+    rpcUrl: cfg.rpcUrl,
+    chainId: cfg.chainId,
+    network: cfg.network,
+    escrowAddress: cfg.addresses.JobEscrow,
+    registryAddress: cfg.addresses.MachineRegistry,
+    escrowAbi: cfg.abi.JobEscrow,
+    registryAbi: cfg.abi.MachineRegistry,
+    verifier: cfg.verifier,
+  };
+}
 
 // Member 3's backend service base URL (see Backend-service/README.md).
 // Override with VITE_MEMBER3_API_URL in a .env file for a deployed backend.

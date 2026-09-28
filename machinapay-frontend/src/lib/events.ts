@@ -24,7 +24,7 @@ export interface TxEvent {
   timeMillis?: number;
   jobId?: string;
   error?: string;
-  nodeType?: "normal" | "suspicious" | "mule" | "contract";
+  nodeType?: "customer" | "machine" | "contract" | "verifier";
 }
 
 type EventListener = (event: TxEvent) => void;

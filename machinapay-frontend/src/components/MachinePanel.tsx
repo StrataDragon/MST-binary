@@ -82,8 +82,14 @@ export function MachinePanel() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 8000);
-    return () => clearInterval(t);
+    const provider = getReadProvider();
+    const registry = getRegistry(provider);
+    registry.on("MachineRegistered", load);
+    registry.on("MachineReputationUpdated", load);
+    return () => {
+      registry.off("MachineRegistered", load);
+      registry.off("MachineReputationUpdated", load);
+    };
   }, []);
 
   return (

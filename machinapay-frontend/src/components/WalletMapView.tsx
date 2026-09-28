@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { formatEther } from "ethers";
+import { formatEther, parseEther, encodeBytes32String, decodeBytes32String, keccak256, toUtf8Bytes } from "ethers";
 import {
   Wallet,
   Cpu,
@@ -11,22 +11,13 @@ import {
   RotateCcw,
   Copy,
   Check,
-  ArrowRight,
-  Info,
-  Clock,
   ExternalLink,
-  Activity,
-  Play,
-  Pause,
+  ShieldCheck,
   Maximize2,
-  RefreshCw,
-  ShieldAlert,
-  Flame,
+  Filter,
 } from "lucide-react";
-import { cfg } from "../lib/config";
-import { sendEth, getLiveBalance } from "../lib/wallet";
-import { eventBus, TxEvent } from "../lib/events";
-import { addressBook } from "../lib/addressBook";
+import { cfg, NATIVE_SYMBOL } from "../lib/config";
+import { getReadProvider, getEscrow, getRegistry, decodeContractError } from "../lib/wallet";
 
 interface WalletMapViewProps {
   signer: any;
@@ -35,30 +26,44 @@ interface WalletMapViewProps {
   onRefreshBalances: () => void;
 }
 
-export type NodeKind = "normal" | "suspicious" | "mule" | "contract";
+export type NodeKind = "customer" | "machine" | "contract" | "verifier";
 
-export interface RadarNode {
+export interface MapNode {
   id: string;
-  name: string;
-  shortLabel: string;
-  type: "wallet" | "contract";
+  label: string;
+  subLabel?: string;
   kind: NodeKind;
   address: string;
   balance: string;
-  txCounts: { confirmed: number; pending: number; failed: number };
-  status: "CONFIRMED" | "PENDING" | "FAILED";
   x: number;
   y: number;
+  details?: Record<string, string | number | boolean>;
 }
 
-export interface RadarEdge {
+export interface MapEdge {
   id: string;
   from: string;
   to: string;
-  amount: string;
-  status: "confirmed" | "pending" | "failed";
-  kind: NodeKind;
+  label: string;
+  action: string;
+  amount?: string;
+  txHash?: string;
+  activeUntil?: number; // timestamp until active animation ends
+  isPending?: boolean;
+  isError?: boolean;
+  errorMessage?: string;
+}
+
+export interface FeedEventItem {
+  id: string;
+  name: string;
+  txHash: string;
+  blockNumber: number;
   timestamp: string;
+  from?: string;
+  to?: string;
+  amount?: string;
+  summary: string;
 }
 
 export function WalletMapView({
@@ -67,959 +72,1018 @@ export function WalletMapView({
   clientBalance,
   onRefreshBalances,
 }: WalletMapViewProps) {
-  const [selectedNodeId, setSelectedNodeId] = useState<string>("client");
+  const [selectedNodeId, setSelectedNodeId] = useState<string>("customer");
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
-  // Animation controls
-  const [isPlaying, setIsPlaying] = useState<boolean>(true);
-  const [animationSpeed, setAnimationSpeed] = useState<number>(1);
-  const [activePacket, setActivePacket] = useState<{
-    from: RadarNode;
-    to: RadarNode;
-    amount: string;
-    isMule: boolean;
-  } | null>(null);
+  // Filter events to connected address
+  const [filterMyEvents, setFilterMyEvents] = useState<boolean>(false);
 
-  // Live node balances
-  const [machineBal, setMachineBal] = useState("10.0000");
-  const [escrowBal, setEscrowBal] = useState("100.0000");
-  const [registryBal, setRegistryBal] = useState("0.0000");
+  // Nodes & Edges
+  const [nodes, setNodes] = useState<MapNode[]>([]);
+  const [edges, setEdges] = useState<MapEdge[]>([]);
+  const [eventsFeed, setEventsFeed] = useState<FeedEventItem[]>([]);
+  const [activeEdgeId, setActiveEdgeId] = useState<string | null>(null);
+  const [activeEdgePacket, setActiveEdgePacket] = useState<{ edgeId: string; amount?: string; txHash?: string } | null>(null);
 
-  // Transfer input form
-  const [transferAmount, setTransferAmount] = useState("0.1");
-  const [transferTarget, setTransferTarget] = useState<string>("machine");
-  const [transferStatus, setTransferStatus] = useState<"idle" | "signing" | "pending" | "confirming" | "confirmed" | "failed">("idle");
-  const [transferTxHash, setTransferTxHash] = useState<string | null>(null);
-  const [transferError, setTransferError] = useState<string | null>(null);
+  // Loading & error states
+  const [loading, setLoading] = useState<boolean>(true);
+  const [rpcError, setRpcError] = useState<string | null>(null);
 
-  // Edge hover tooltip state
-  const [hoveredEdge, setHoveredEdge] = useState<{ amount: string; gas: string; block: string; timestamp: string } | null>(null);
+  // Create Job Form inside Right Panel
+  const [formDescription, setFormDescription] = useState("Autonomous transport package delivery");
+  const [formReward, setFormReward] = useState("10");
+  const [formDurationMinutes, setFormDurationMinutes] = useState("60");
+  const [formSubmitting, setFormSubmitting] = useState(false);
+  const [formTxStatus, setFormTxStatus] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
 
-  // Dynamic Nodes & Edges State (initialized from seed, then dynamically populated)
-  const [nodes, setNodes] = useState<RadarNode[]>([
-    {
-      id: "client",
-      name: "Client Wallet (Your Account)",
-      shortLabel: "CLIENT",
-      type: "wallet",
-      kind: "normal",
-      address: clientAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-      balance: `${clientBalance || "100.00"} ETH`,
-      txCounts: { confirmed: 18, pending: 0, failed: 0 },
-      status: "CONFIRMED",
-      x: 90,
-      y: 110,
-    },
-    {
-      id: "machine",
-      name: "Machine Wallet (M-042 Autonomous Rover)",
-      shortLabel: "M-042",
-      type: "wallet",
-      kind: "normal",
-      address: "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
-      balance: "10.00 ETH",
-      txCounts: { confirmed: 24, pending: 0, failed: 0 },
-      status: "CONFIRMED",
-      x: 350,
-      y: 110,
-    },
-    {
-      id: "escrow",
-      name: "JobEscrow Contract Vault",
-      shortLabel: "ESCROW",
-      type: "contract",
-      kind: "contract",
-      address: cfg.addresses.JobEscrow,
-      balance: "100.00 ETH",
-      txCounts: { confirmed: 35, pending: 0, failed: 0 },
-      status: "CONFIRMED",
-      x: 90,
-      y: 310,
-    },
-    {
-      id: "registry",
-      name: "MachineRegistry Contract",
-      shortLabel: "REGISTRY",
-      type: "contract",
-      kind: "contract",
-      address: cfg.addresses.MachineRegistry,
-      balance: "0.01 ETH",
-      txCounts: { confirmed: 12, pending: 0, failed: 0 },
-      status: "CONFIRMED",
-      x: 350,
-      y: 310,
-    },
-  ]);
+  // SVG viewport
+  const [viewBox, setViewBox] = useState({ x: 0, y: 0, width: 960, height: 560 });
 
-  const [edges, setEdges] = useState<RadarEdge[]>([
-    {
-      id: "edge-client-escrow",
-      from: "client",
-      to: "escrow",
-      amount: "100.0 ETH",
-      status: "confirmed",
-      kind: "normal",
-      timestamp: "10m ago",
-    },
-    {
-      id: "edge-client-machine",
-      from: "client",
-      to: "machine",
-      amount: "10.0 ETH",
-      status: "confirmed",
-      kind: "normal",
-      timestamp: "12m ago",
-    },
-    {
-      id: "edge-escrow-machine",
-      from: "escrow",
-      to: "machine",
-      amount: "100.0 ETH",
-      status: "confirmed",
-      kind: "normal",
-      timestamp: "10m ago",
-    },
-    {
-      id: "edge-machine-registry",
-      from: "machine",
-      to: "registry",
-      amount: "0.01 ETH",
-      status: "confirmed",
-      kind: "normal",
-      timestamp: "15m ago",
-    },
-  ]);
-
-  // Transaction Feed list
-  const [feedTxs, setFeedTxs] = useState<TxEvent[]>([]);
-
-  // Function to dynamically add or update nodes and edges from incoming live transactions
-  function addNodeAndEdgeFromTx(evt: TxEvent) {
-    console.log("[RADAR] Dynamic graph update from incoming transaction:", evt);
-
-    setNodes((prevNodes) => {
-      const nextNodes = [...prevNodes];
-      const isContractTo =
-        evt.to.toLowerCase() === cfg.addresses.JobEscrow.toLowerCase() ||
-        evt.to.toLowerCase() === cfg.addresses.MachineRegistry.toLowerCase();
-      const isContractFrom =
-        evt.from.toLowerCase() === cfg.addresses.JobEscrow.toLowerCase() ||
-        evt.from.toLowerCase() === cfg.addresses.MachineRegistry.toLowerCase();
-
-      const isMule = evt.nodeType === "mule" || evt.status === "failed";
-      const isSuspicious = evt.nodeType === "suspicious" || evt.status === "pending";
-
-      const kindTo: NodeKind = isContractTo ? "contract" : isMule ? "mule" : isSuspicious ? "suspicious" : "normal";
-      const kindFrom: NodeKind = isContractFrom ? "contract" : isMule ? "mule" : isSuspicious ? "suspicious" : "normal";
-
-      // 1. Ensure 'from' node exists
-      let fromNode = nextNodes.find((n) => n.address.toLowerCase() === evt.from.toLowerCase());
-      if (!fromNode) {
-        const slot = nextNodes.length;
-        const radius = 135;
-        const angle = (slot * 55 * Math.PI) / 180;
-        const cx = 220;
-        const cy = 210;
-        fromNode = {
-          id: `node-${evt.from.slice(0, 6)}`,
-          name: addressBook.resolve(evt.from).label,
-          shortLabel: addressBook.resolve(evt.from).label.slice(0, 8).toUpperCase(),
-          type: isContractFrom ? "contract" : "wallet",
-          kind: kindFrom,
-          address: evt.from,
-          balance: "10.00 ETH",
-          txCounts: { confirmed: 1, pending: 0, failed: 0 },
-          status: isMule ? "FAILED" : "CONFIRMED",
-          x: Math.round(cx + radius * Math.cos(angle)),
-          y: Math.round(cy + radius * Math.sin(angle)),
-        };
-        nextNodes.push(fromNode);
-      }
-
-      // 2. Ensure 'to' node exists
-      let toNode = nextNodes.find((n) => n.address.toLowerCase() === evt.to.toLowerCase());
-      if (!toNode) {
-        const slot = nextNodes.length;
-        const radius = 135;
-        const angle = ((slot * 55 + 30) * Math.PI) / 180;
-        const cx = 220;
-        const cy = 210;
-        toNode = {
-          id: `node-${evt.to.slice(0, 6)}`,
-          name: addressBook.resolve(evt.to).label,
-          shortLabel: addressBook.resolve(evt.to).label.slice(0, 8).toUpperCase(),
-          type: isContractTo ? "contract" : "wallet",
-          kind: kindTo,
-          address: evt.to,
-          balance: "5.00 ETH",
-          txCounts: { confirmed: 1, pending: 0, failed: 0 },
-          status: isMule ? "FAILED" : isSuspicious ? "PENDING" : "CONFIRMED",
-          x: Math.round(cx + radius * Math.cos(angle)),
-          y: Math.round(cy + radius * Math.sin(angle)),
-        };
-        nextNodes.push(toNode);
-      } else {
-        if (isMule) {
-          toNode.kind = "mule";
-          toNode.status = "FAILED";
-        }
-      }
-
-      // Trigger packet animation between from and to nodes
-      if (fromNode && toNode) {
-        setActivePacket({
-          from: fromNode,
-          to: toNode,
-          amount: evt.amount || "10 ETH",
-          isMule,
-        });
-        setTimeout(() => setActivePacket(null), 2400 / animationSpeed);
-      }
-
-      return nextNodes;
-    });
-
-    // 3. Add or update edge
-    setEdges((prevEdges) => {
-      const edgeId = `edge-${evt.from.slice(0, 6)}-${evt.to.slice(0, 6)}`;
-      const existing = prevEdges.find((e) => e.id === edgeId);
-      const isMule = evt.nodeType === "mule" || evt.status === "failed";
-      const isSuspicious = evt.nodeType === "suspicious" || evt.status === "pending";
-      const kind: NodeKind = isMule ? "mule" : isSuspicious ? "suspicious" : "normal";
-
-      if (existing) {
-        return prevEdges.map((e) =>
-          e.id === edgeId
-            ? { ...e, amount: evt.amount || e.amount, status: evt.status as any, kind, timestamp: "Just now" }
-            : e
-        );
-      }
-
-      const newEdge: RadarEdge = {
-        id: edgeId,
-        from: evt.from,
-        to: evt.to,
-        amount: evt.amount || "10.0 ETH",
-        status: evt.status as any,
-        kind,
-        timestamp: "Just now",
-      };
-      return [...prevEdges, newEdge];
-    });
-
-    // 4. Prepend to live transaction feed
-    setFeedTxs((prev) => {
-      const filtered = prev.filter((t) => t.txHash !== evt.txHash);
-      return [evt, ...filtered].slice(0, 20);
-    });
-  }
-
-  // Read actual live balances from chain
-  async function loadLiveBalances() {
-    try {
-      const machineAddress = "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1";
-      const mB = await getLiveBalance(machineAddress);
-      setMachineBal(mB);
-
-      const eB = await getLiveBalance(cfg.addresses.JobEscrow);
-      setEscrowBal(eB);
-
-      const rB = await getLiveBalance(cfg.addresses.MachineRegistry);
-      setRegistryBal(rB);
-    } catch (e) {
-      console.warn("Could not load node balances:", e);
-    }
-  }
-
-  // Subscribe to live transactions from eventBus (which gets fed by SSE + WS + on-chain events)
-  useEffect(() => {
-    loadLiveBalances();
-
-    // Populate initial feed from eventBus history
-    const initialHistory = eventBus.getHistory();
-    if (initialHistory.length > 0) {
-      setFeedTxs(initialHistory);
-      for (const evt of initialHistory) {
-        addNodeAndEdgeFromTx(evt);
-      }
-    }
-
-    const unsub = eventBus.subscribe((evt) => {
-      addNodeAndEdgeFromTx(evt);
-      loadLiveBalances();
-    });
-
-    return () => unsub();
-  }, []);
-
-  function handleCopy(text: string, key: string) {
-    navigator.clipboard.writeText(text);
+  function copyText(key: string, val: string) {
+    navigator.clipboard.writeText(val);
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 1500);
   }
 
-  // Real on-chain ETH transfer execution
-  async function handleSendEth() {
-    if (!signer) {
-      setTransferError("Connect wallet to execute transfer.");
+  // 1. Initial Load from Chain (Nodes + queryFilter for recent events)
+  async function loadChainData() {
+    setLoading(true);
+    setRpcError(null);
+    try {
+      const provider = getReadProvider();
+      const registry = getRegistry(provider);
+      const escrow = getEscrow(provider);
+
+      // Fetch escrow & registry balances
+      const [escrowBalRaw, registryBalRaw] = await Promise.all([
+        provider.getBalance(cfg.addresses.JobEscrow).catch(() => 0n),
+        provider.getBalance(cfg.addresses.MachineRegistry).catch(() => 0n),
+      ]);
+      const escrowBal = formatEther(escrowBalRaw);
+      const registryBal = formatEther(registryBalRaw);
+
+      // Fetch registered machines from registry
+      const machineIdsBytes: string[] = await registry.getMachineIds().catch(() => []);
+      const machineNodesList: MapNode[] = [];
+
+      for (let i = 0; i < machineIdsBytes.length; i++) {
+        const idBytes = machineIdsBytes[i];
+        let idStr = "";
+        try {
+          idStr = decodeBytes32String(idBytes);
+        } catch {
+          idStr = idBytes.slice(0, 8);
+        }
+        if (!idStr) continue;
+
+        const info = await registry.getMachine(idBytes).catch(() => null);
+        if (!info) continue;
+
+        const mBalRaw = await provider.getBalance(info.wallet).catch(() => 0n);
+        const mBal = formatEther(mBalRaw);
+
+        machineNodesList.push({
+          id: `machine-${idStr}`,
+          label: idStr,
+          subLabel: info.active ? "Active Machine" : "Inactive",
+          kind: "machine",
+          address: info.wallet,
+          balance: mBal,
+          x: 740,
+          y: 140 + i * 160,
+          details: {
+            "Machine ID": idStr,
+            "Operator Wallet": info.wallet,
+            "Signer Address": info.signer,
+            "Owner Address": info.owner,
+            "Active Status": info.active,
+            "Reputation Score": Number(info.reputation),
+            "Jobs Completed": Number(info.jobsCompleted),
+            "Jobs Failed": Number(info.jobsFailed),
+            "Staked Collateral": `${formatEther(info.stake)} ${NATIVE_SYMBOL}`,
+          },
+        });
+      }
+
+      // Build Base Nodes
+      const customerNode: MapNode = {
+        id: "customer",
+        label: clientAddress ? "Customer Wallet" : "Customer (Disconnected)",
+        subLabel: clientAddress ? "Connected" : "No Wallet",
+        kind: "customer",
+        address: clientAddress || "0x0000000000000000000000000000000000000000",
+        balance: clientBalance || "0.0000",
+        x: 160,
+        y: 260,
+        details: {
+          "Client Address": clientAddress || "Not connected",
+          "Account Balance": `${clientBalance} ${NATIVE_SYMBOL}`,
+          "Chain ID": cfg.chainId,
+          "Network Name": cfg.network,
+        },
+      };
+
+      const escrowNode: MapNode = {
+        id: "escrow",
+        label: "JobEscrow",
+        subLabel: "Core Escrow Contract",
+        kind: "contract",
+        address: cfg.addresses.JobEscrow,
+        balance: escrowBal,
+        x: 450,
+        y: 260,
+        details: {
+          "Contract Name": "JobEscrow.sol",
+          "Contract Address": cfg.addresses.JobEscrow,
+          "Vault Balance": `${escrowBal} ${NATIVE_SYMBOL}`,
+          "Authorized Verifier": cfg.verifier,
+        },
+      };
+
+      const registryNode: MapNode = {
+        id: "registry",
+        label: "MachineRegistry",
+        subLabel: "Identity & Collateral",
+        kind: "contract",
+        address: cfg.addresses.MachineRegistry,
+        balance: registryBal,
+        x: 740,
+        y: machineNodesList.length > 0 ? 140 + machineNodesList.length * 160 : 420,
+        details: {
+          "Contract Name": "MachineRegistry.sol",
+          "Contract Address": cfg.addresses.MachineRegistry,
+          "Total Staked Vault": `${registryBal} ${NATIVE_SYMBOL}`,
+        },
+      };
+
+      const verifierNode: MapNode = {
+        id: "verifier",
+        label: "Protocol Verifier",
+        subLabel: "Independent Attestation",
+        kind: "verifier",
+        address: cfg.verifier,
+        balance: "0.0000",
+        x: 450,
+        y: 90,
+        details: {
+          "Verifier Address": cfg.verifier,
+          "Attestation Schema": "EIP-712 MachinaPayAttestation",
+        },
+      };
+
+      const allNodes = [customerNode, escrowNode, verifierNode, ...machineNodesList, registryNode];
+      setNodes(allNodes);
+
+      // Build Base Protocol Edges
+      const baseEdges: MapEdge[] = [
+        {
+          id: "edge-customer-escrow",
+          from: "customer",
+          to: "escrow",
+          label: "createJob",
+          action: "createJob",
+        },
+        {
+          id: "edge-verifier-escrow",
+          from: "verifier",
+          to: "escrow",
+          label: "attestation",
+          action: "submitAttestation",
+        },
+        {
+          id: "edge-escrow-registry",
+          from: "escrow",
+          to: "registry",
+          label: "recordJobResult",
+          action: "recordJobResult",
+        },
+      ];
+
+      // Add edges to each machine
+      machineNodesList.forEach((m) => {
+        baseEdges.push({
+          id: `edge-escrow-${m.id}`,
+          from: "escrow",
+          to: m.id,
+          label: "release payment",
+          action: "release",
+        });
+        baseEdges.push({
+          id: `edge-${m.id}-escrow`,
+          from: m.id,
+          to: "escrow",
+          label: "submitProof",
+          action: "submitProof",
+        });
+      });
+
+      setEdges(baseEdges);
+
+      // 2. QueryFilter for past events once (N recent blocks)
+      const currentBlock = await provider.getBlockNumber().catch(() => 0);
+      const startBlock = Math.max(0, currentBlock - 5000);
+
+      const [escrowLogs, regLogs] = await Promise.all([
+        escrow.queryFilter("*", startBlock, currentBlock).catch(() => []),
+        registry.queryFilter("*", startBlock, currentBlock).catch(() => []),
+      ]);
+
+      const parsedFeed: FeedEventItem[] = [];
+      const allLogs = [...escrowLogs, ...regLogs].sort((a, b) => b.blockNumber - a.blockNumber);
+
+      for (const log of allLogs) {
+        const frag = (log as any).fragment;
+        if (!frag) continue;
+        const name = frag.name;
+        const args = (log as any).args;
+        let summary = name;
+        let amt: string | undefined;
+
+        if (name === "JobCreated") {
+          amt = formatEther(args?.reward ?? 0);
+          summary = `JobCreated: ${args?.description || "New job"} (${amt} ${NATIVE_SYMBOL})`;
+        } else if (name === "JobAccepted") {
+          summary = `JobAccepted: Machine accepted job ${args?.jobId?.slice(0, 8)}…`;
+        } else if (name === "ProofSubmitted") {
+          summary = `ProofSubmitted: Signed EIP-712 proof for ${args?.jobId?.slice(0, 8)}…`;
+        } else if (name === "VerificationSubmitted") {
+          summary = `VerificationSubmitted: Attestation ${args?.passed ? "PASSED" : "FAILED"}`;
+        } else if (name === "PaymentReleased") {
+          amt = formatEther(args?.reward ?? 0);
+          summary = `PaymentReleased: ${amt} ${NATIVE_SYMBOL} released to machine`;
+        } else if (name === "JobRefunded") {
+          amt = formatEther(args?.reward ?? 0);
+          summary = `JobRefunded: ${amt} ${NATIVE_SYMBOL} refunded to customer`;
+        } else if (name === "MachineRegistered") {
+          summary = `MachineRegistered: New machine registered with stake`;
+        } else if (name === "MachineReputationUpdated") {
+          summary = `MachineReputationUpdated: score=${args?.newReputation}`;
+        }
+
+        parsedFeed.push({
+          id: `${log.transactionHash}-${log.index}`,
+          name,
+          txHash: log.transactionHash,
+          blockNumber: log.blockNumber,
+          timestamp: `Block #${log.blockNumber}`,
+          amount: amt,
+          summary,
+          from: args?.customer || args?.machineWallet,
+        });
+      }
+
+      setEventsFeed(parsedFeed.slice(0, 20));
+      setLoading(false);
+    } catch (err: any) {
+      console.error("Error loading Wallet Map data:", err);
+      setRpcError(err.message || String(err));
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadChainData();
+  }, [clientAddress, clientBalance]);
+
+  // 3. Event-Driven Real-time Updates (escrow.on / registry.on)
+  useEffect(() => {
+    let provider: any;
+    try {
+      provider = getReadProvider();
+    } catch {
       return;
     }
-    const targetNode = nodes.find((n) => n.id === transferTarget);
-    if (!targetNode) return;
+    const escrow = getEscrow(provider);
+    const registry = getRegistry(provider);
 
-    setTransferStatus("signing");
-    setTransferError(null);
-    const eventId = `tx-${Date.now()}`;
+    function triggerEdgeHighlight(edgeId: string, amount?: string, txHash?: string) {
+      setActiveEdgeId(edgeId);
+      setActiveEdgePacket({ edgeId, amount, txHash });
+      setTimeout(() => {
+        setActiveEdgeId(null);
+        setActiveEdgePacket(null);
+      }, 2200);
+    }
 
-    try {
-      eventBus.emit({
-        id: eventId,
-        from: clientAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        to: targetNode.address,
-        amount: `${transferAmount} ETH`,
-        type: "transfer",
-        status: "signing",
-        timestamp: new Date().toLocaleTimeString(),
-      });
-
-      const tx = await sendEth(signer, targetNode.address, transferAmount);
-      setTransferTxHash(tx.hash);
-      setTransferStatus("pending");
-
-      eventBus.emit({
-        id: eventId,
-        txHash: tx.hash,
-        from: clientAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        to: targetNode.address,
-        amount: `${transferAmount} ETH`,
-        type: "transfer",
-        status: "pending",
-        timestamp: new Date().toLocaleTimeString(),
-      });
-
-      setTransferStatus("confirming");
-      const receipt = await tx.wait();
-
-      setTransferStatus("confirmed");
-      eventBus.emit({
-        id: eventId,
-        txHash: tx.hash,
-        from: clientAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        to: targetNode.address,
-        amount: `${transferAmount} ETH`,
-        type: "transfer",
-        status: "confirmed",
-        gasUsed: `${receipt?.gasUsed.toString()} gas`,
-        blockNumber: receipt?.blockNumber,
-        timestamp: new Date().toLocaleTimeString(),
-      });
-
+    const onJobCreated = (jobId: string, customer: string, reward: bigint, metadataHash: string, deadline: bigint, description: string, event: any) => {
+      const amt = formatEther(reward);
+      const hash = event?.log?.transactionHash || "0x…";
+      triggerEdgeHighlight("edge-customer-escrow", `${amt} ${NATIVE_SYMBOL}`, hash);
+      setEventsFeed((prev) => [
+        {
+          id: `${hash}-${Date.now()}`,
+          name: "JobCreated",
+          txHash: hash,
+          blockNumber: event?.log?.blockNumber || 0,
+          timestamp: "Just now",
+          amount: amt,
+          summary: `JobCreated: ${description} (${amt} ${NATIVE_SYMBOL})`,
+          from: customer,
+        },
+        ...prev,
+      ]);
+      loadChainData();
       onRefreshBalances();
-      loadLiveBalances();
-    } catch (err: any) {
-      const msg = err?.reason || err?.message || "Transaction failed";
-      setTransferError(msg);
-      setTransferStatus("failed");
+    };
 
-      eventBus.emit({
-        id: eventId,
-        from: clientAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-        to: targetNode.address,
-        amount: `${transferAmount} ETH`,
-        type: "transfer",
-        status: "failed",
-        error: msg,
-        timestamp: new Date().toLocaleTimeString(),
-      });
+    const onJobAccepted = (jobId: string, machineId: string, machineWallet: string, event: any) => {
+      const hash = event?.log?.transactionHash || "0x…";
+      // Find machine edge
+      const edge = edges.find((e) => e.action === "release") || edges[0];
+      if (edge) triggerEdgeHighlight(edge.id, undefined, hash);
+      setEventsFeed((prev) => [
+        {
+          id: `${hash}-${Date.now()}`,
+          name: "JobAccepted",
+          txHash: hash,
+          blockNumber: event?.log?.blockNumber || 0,
+          timestamp: "Just now",
+          summary: `JobAccepted: Machine accepted job ${jobId.slice(0, 8)}…`,
+          from: machineWallet,
+        },
+        ...prev,
+      ]);
+      loadChainData();
+    };
+
+    const onProofSubmitted = (jobId: string, machineId: string, result: number, proofHash: string, evidenceHash: string, event: any) => {
+      const hash = event?.log?.transactionHash || "0x…";
+      const edge = edges.find((e) => e.action === "submitProof") || edges[0];
+      if (edge) triggerEdgeHighlight(edge.id, undefined, hash);
+      setEventsFeed((prev) => [
+        {
+          id: `${hash}-${Date.now()}`,
+          name: "ProofSubmitted",
+          txHash: hash,
+          blockNumber: event?.log?.blockNumber || 0,
+          timestamp: "Just now",
+          summary: `ProofSubmitted: EIP-712 proof for ${jobId.slice(0, 8)}…`,
+        },
+        ...prev,
+      ]);
+    };
+
+    const onVerificationSubmitted = (jobId: string, passed: boolean, event: any) => {
+      const hash = event?.log?.transactionHash || "0x…";
+      triggerEdgeHighlight("edge-verifier-escrow", undefined, hash);
+      setEventsFeed((prev) => [
+        {
+          id: `${hash}-${Date.now()}`,
+          name: "VerificationSubmitted",
+          txHash: hash,
+          blockNumber: event?.log?.blockNumber || 0,
+          timestamp: "Just now",
+          summary: `VerificationSubmitted: Attestation ${passed ? "PASSED" : "FAILED"}`,
+        },
+        ...prev,
+      ]);
+    };
+
+    const onPaymentReleased = (jobId: string, machineWallet: string, reward: bigint, event: any) => {
+      const amt = formatEther(reward);
+      const hash = event?.log?.transactionHash || "0x…";
+      const edge = edges.find((e) => e.action === "release") || edges[0];
+      if (edge) triggerEdgeHighlight(edge.id, `${amt} ${NATIVE_SYMBOL}`, hash);
+      setEventsFeed((prev) => [
+        {
+          id: `${hash}-${Date.now()}`,
+          name: "PaymentReleased",
+          txHash: hash,
+          blockNumber: event?.log?.blockNumber || 0,
+          timestamp: "Just now",
+          amount: amt,
+          summary: `PaymentReleased: ${amt} ${NATIVE_SYMBOL} released to machine`,
+          to: machineWallet,
+        },
+        ...prev,
+      ]);
+      loadChainData();
+      onRefreshBalances();
+    };
+
+    const onJobRefunded = (jobId: string, customer: string, reward: bigint, reason: number, event: any) => {
+      const amt = formatEther(reward);
+      const hash = event?.log?.transactionHash || "0x…";
+      triggerEdgeHighlight("edge-customer-escrow", `${amt} ${NATIVE_SYMBOL} REFUND`, hash);
+      setEventsFeed((prev) => [
+        {
+          id: `${hash}-${Date.now()}`,
+          name: "JobRefunded",
+          txHash: hash,
+          blockNumber: event?.log?.blockNumber || 0,
+          timestamp: "Just now",
+          amount: amt,
+          summary: `JobRefunded: ${amt} ${NATIVE_SYMBOL} refunded to customer`,
+          to: customer,
+        },
+        ...prev,
+      ]);
+      loadChainData();
+      onRefreshBalances();
+    };
+
+    const onMachineReputationUpdated = (machineId: string, oldRep: bigint, newRep: bigint, event: any) => {
+      const hash = event?.log?.transactionHash || "0x…";
+      triggerEdgeHighlight("edge-escrow-registry", `Rep ${oldRep}→${newRep}`, hash);
+      loadChainData();
+    };
+
+    escrow.on("JobCreated", onJobCreated);
+    escrow.on("JobAccepted", onJobAccepted);
+    escrow.on("ProofSubmitted", onProofSubmitted);
+    escrow.on("VerificationSubmitted", onVerificationSubmitted);
+    escrow.on("PaymentReleased", onPaymentReleased);
+    escrow.on("JobRefunded", onJobRefunded);
+    registry.on("MachineReputationUpdated", onMachineReputationUpdated);
+
+    return () => {
+      escrow.off("JobCreated", onJobCreated);
+      escrow.off("JobAccepted", onJobAccepted);
+      escrow.off("ProofSubmitted", onProofSubmitted);
+      escrow.off("VerificationSubmitted", onVerificationSubmitted);
+      escrow.off("PaymentReleased", onPaymentReleased);
+      escrow.off("JobRefunded", onJobRefunded);
+      registry.off("MachineReputationUpdated", onMachineReputationUpdated);
+    };
+  }, [edges]);
+
+  // 4. Create Job Form Submission (Right Panel)
+  async function handleCreateJob(e: React.FormEvent) {
+    e.preventDefault();
+    if (!signer) {
+      setFormError("Connect your wallet first.");
+      return;
     }
-  }
+    setFormSubmitting(true);
+    setFormError(null);
+    setFormTxStatus("Waiting for signature...");
 
-  // Trigger test live transaction broadcast via backend endpoint
-  async function triggerSimulation(type: "normal" | "mule") {
+    // Set Customer->Escrow edge pending
+    setEdges((prev) =>
+      prev.map((ed) =>
+        ed.id === "edge-customer-escrow" ? { ...ed, isPending: true, isError: false } : ed
+      )
+    );
+
+    let escrow: any;
     try {
-      const pseudoWallet =
-        type === "mule"
-          ? "0x9965507D1a55bcC2695C58ba16FB37d819B0A4df"
-          : "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
-      const res = await fetch("http://localhost:4000/api/transactions/simulate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          from: clientAddress || "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
-          to: pseudoWallet,
-          amount: type === "mule" ? "25.0 ETH" : "5.0 ETH",
-          type: "transfer",
-          nodeType: type,
-          status: type === "mule" ? "failed" : "confirmed",
-        }),
+      escrow = getEscrow(signer);
+      const jobId = keccak256(toUtf8Bytes(`job-${Date.now()}`));
+      const durationSeconds = Math.max(60, Number(formDurationMinutes) * 60);
+
+      // Register metadata off-chain to Backend
+      let metadataHash = keccak256(toUtf8Bytes(formDescription));
+      try {
+        const metaRes = await fetch("http://localhost:4000/api/jobs", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            taskType: "PACKAGE_TRANSPORT",
+            description: formDescription,
+          }),
+        });
+        if (metaRes.ok) {
+          const mJson = await metaRes.json();
+          if (mJson.metadataHash) metadataHash = mJson.metadataHash;
+        }
+      } catch {
+        // Fallback
+      }
+
+      setFormTxStatus("Broadcasting transaction to blockchain…");
+      const tx = await escrow.createJob(jobId, metadataHash, durationSeconds, formDescription, {
+        value: parseEther(formReward),
       });
-      const data = await res.json();
-      console.log("[SIMULATE] Broadcast response:", data);
-    } catch (err) {
-      console.error("Simulation error:", err);
+
+      setFormTxStatus(`Mining transaction (${tx.hash.slice(0, 10)}…)`);
+      const rc = await tx.wait();
+
+      setFormTxStatus(`Success! Job funded in block #${rc.blockNumber}`);
+      setEdges((prev) =>
+        prev.map((ed) =>
+          ed.id === "edge-customer-escrow" ? { ...ed, isPending: false, isError: false } : ed
+        )
+      );
+
+      // Trigger instant pulse
+      setActiveEdgeId("edge-customer-escrow");
+      setActiveEdgePacket({
+        edgeId: "edge-customer-escrow",
+        amount: `${formReward} ${NATIVE_SYMBOL}`,
+        txHash: tx.hash,
+      });
+      setTimeout(() => {
+        setActiveEdgeId(null);
+        setActiveEdgePacket(null);
+      }, 2200);
+
+      loadChainData();
+      onRefreshBalances();
+    } catch (err: any) {
+      console.error("JobEscrow.createJob error:", err);
+      const decoded = decodeContractError(err, escrow);
+      setFormError(decoded);
+      setFormTxStatus(null);
+      // Turn edge red on error
+      setEdges((prev) =>
+        prev.map((ed) =>
+          ed.id === "edge-customer-escrow"
+            ? { ...ed, isPending: false, isError: true, errorMessage: decoded }
+            : ed
+        )
+      );
+    } finally {
+      setFormSubmitting(false);
     }
   }
 
-  const activeNode = nodes.find((n) => n.id === selectedNodeId) || nodes[0];
-  const muleCount = nodes.filter((n) => n.kind === "mule").length;
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || nodes[0];
+
+  const filteredFeed = filterMyEvents && clientAddress
+    ? eventsFeed.filter(
+        (ev) =>
+          ev.from?.toLowerCase() === clientAddress.toLowerCase() ||
+          ev.to?.toLowerCase() === clientAddress.toLowerCase()
+      )
+    : eventsFeed;
 
   return (
-    <div className="space-y-5 font-sans">
-      {/* Top Header & Typology Toolbar */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+    <div className="space-y-6 font-sans">
+      {/* 1. Header Banner */}
+      <div className="bg-white border border-gray-200 rounded-lg p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-xs">
         <div>
-          <div className="flex items-center gap-2">
-            <Activity className="w-5 h-5 text-accent-blue" />
-            <h2 className="text-base font-bold text-primary tracking-wider uppercase font-mono">
-              TYPOLOGY RADAR — WALLET MAP & TRANSACTION TOPOLOGY
-            </h2>
-            <span className="pill-confirmed text-[10px] font-mono font-bold px-2 py-0.5 rounded-full flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-accent-green animate-pulse" />
-              LIVE
-            </span>
-            {muleCount > 0 && (
-              <span className="pill-failed text-[10px] font-mono font-bold px-2.5 py-0.5 rounded-full flex items-center gap-1 animate-pulse">
-                <ShieldAlert className="w-3 h-3 text-accent-red" />
-                {muleCount} MULE NODE DETECTED
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-secondary font-mono mt-0.5">
-            Real-time graph canvas · Cyan = Normal · Orange = Suspicious · Red = Mule Aggregator · Purple = Contract
+          <h1 className="text-lg font-bold text-gray-900 tracking-tight">Wallet Map</h1>
+          <p className="text-xs text-gray-500 mt-0.5">
+            Live map of customer, machines and escrow flows.
           </p>
         </div>
 
-        {/* Small UI Pill Controls & Stats Chips */}
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Stats chips */}
-          <span className="px-2.5 py-1 rounded-full bg-[#111827] text-white/90 border border-gray-700 text-[10px] font-mono">
-            {nodes.length} nodes
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500 font-mono">
+            {nodes.length} nodes / {edges.length} edges
           </span>
-          <span className="px-2.5 py-1 rounded-full bg-[#111827] text-white/90 border border-gray-700 text-[10px] font-mono">
-            {edges.length} edges
-          </span>
-
-          {/* Action pills: Fit, Clear, Play/Pause, Replay, Speed */}
           <button
-            onClick={() => setSelectedNodeId("client")}
-            className="px-3 py-1 rounded-full bg-[#111827] hover:bg-gray-800 text-white font-mono text-xs border border-gray-700 flex items-center gap-1 transition-colors"
+            onClick={() => setViewBox({ x: 0, y: 0, width: 960, height: 560 })}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-gray-200 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors"
           >
-            <Maximize2 className="w-3 h-3 text-cyan-400" />
+            <Maximize2 className="w-3.5 h-3.5" />
             <span>Fit</span>
           </button>
-
           <button
-            onClick={() => {
-              setEdges([]);
-              setFeedTxs([]);
-            }}
-            className="px-3 py-1 rounded-full bg-[#111827] hover:bg-gray-800 text-white font-mono text-xs border border-gray-700 transition-colors"
+            onClick={loadChainData}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-gray-200 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors"
           >
-            Clear
-          </button>
-
-          <button
-            onClick={() => setIsPlaying(!isPlaying)}
-            className="px-2.5 py-1 rounded-full bg-[#111827] hover:bg-gray-800 text-white font-mono text-xs border border-gray-700 transition-colors"
-            title={isPlaying ? "Pause Flow" : "Play Flow"}
-          >
-            {isPlaying ? <Pause className="w-3 h-3 text-accent-amber" /> : <Play className="w-3 h-3 text-accent-green" />}
-          </button>
-
-          <button
-            onClick={() => {
-              if (nodes.length >= 2) {
-                setActivePacket({
-                  from: nodes[0],
-                  to: nodes[1],
-                  amount: "10.0 ETH",
-                  isMule: false,
-                });
-                setTimeout(() => setActivePacket(null), 2000);
-              }
-            }}
-            className="px-2.5 py-1 rounded-full bg-[#111827] hover:bg-gray-800 text-white font-mono text-xs border border-gray-700 transition-colors"
-            title="Replay Packet Animation"
-          >
-            <RotateCcw className="w-3 h-3 text-cyan-400" />
-          </button>
-
-          <button
-            onClick={() => setAnimationSpeed((s) => (s === 1 ? 2 : 1))}
-            className="px-2.5 py-1 rounded-full bg-[#111827] hover:bg-gray-800 text-cyan-400 font-mono text-[10px] font-bold border border-gray-700"
-            title="Toggle Animation Speed"
-          >
-            {animationSpeed}x
-          </button>
-
-          {/* Quick Simulation Triggers */}
-          <button
-            onClick={() => triggerSimulation("normal")}
-            className="px-2.5 py-1 rounded-full bg-cyan-950/80 hover:bg-cyan-900 text-cyan-300 border border-cyan-700/60 font-mono text-[10px] transition-colors"
-            title="Simulate Normal Flow"
-          >
-            + Normal
-          </button>
-          <button
-            onClick={() => triggerSimulation("mule")}
-            className="px-2.5 py-1 rounded-full bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-700/60 font-mono text-[10px] transition-colors"
-            title="Simulate Flagged Mule Node"
-          >
-            + Mule Node
+            <RotateCcw className="w-3.5 h-3.5" />
+            <span>Refresh</span>
           </button>
         </div>
       </div>
 
-      {/* Main Grid: 7 cols Dark Graph Canvas, 5 cols Transaction Feed & Actions */}
+      {rpcError && (
+        <div className="p-4 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-500" />
+            <span>RPC Connection Error: {rpcError}</span>
+          </div>
+          <button
+            onClick={loadChainData}
+            className="underline font-semibold hover:text-red-900"
+          >
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* 2. Main Canvas + Right Inspector Panel */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (7 cols): Dark Graph Canvas */}
-        <div className="lg:col-span-7 bg-[#0B0B0E] border border-[#1E1E24] rounded-lg shadow-sm p-5 flex flex-col justify-between min-h-[480px] relative overflow-hidden select-none">
-          {/* Canvas Sub-Header */}
-          <div className="flex items-center justify-between border-b border-[#1E1E24] pb-2.5 mb-2">
-            <div className="flex items-center gap-2">
-              <span className="text-[11px] font-mono uppercase tracking-wider text-[#9CA3AF]">
-                TOPOLOGY RADAR CANVAS
+        {/* Left: Interactive Graph Canvas (Dark Canvas with white/neutral wrapper) */}
+        <div className="lg:col-span-8 bg-[#0B0B0E] border border-gray-800 rounded-xl relative overflow-hidden flex flex-col justify-between shadow-sm min-h-[560px]">
+          {/* Legend: Customer, Machine, Contract, Verifier */}
+          <div className="p-3 border-b border-gray-800 bg-[#070709] flex flex-wrap items-center justify-between gap-3 text-[11px] font-mono select-none">
+            <div className="flex items-center gap-4">
+              <span className="text-gray-400">Legend:</span>
+              <span className="flex items-center gap-1.5 text-gray-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" /> Customer
               </span>
-              <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-cyan-950/60 text-cyan-400 border border-cyan-800/50">
-                ACTIVE MESH
+              <span className="flex items-center gap-1.5 text-gray-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Contract
+              </span>
+              <span className="flex items-center gap-1.5 text-gray-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Machine
+              </span>
+              <span className="flex items-center gap-1.5 text-gray-300">
+                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> Verifier
               </span>
             </div>
-            <span className="text-[10px] text-[#6B7280] font-mono">
-              Click node to inspect ledger parameters
-            </span>
-          </div>
 
-          {/* SVG Canvas Area */}
-          <div className="flex-1 flex items-center justify-center relative py-2 overflow-x-auto min-w-0">
-            <svg width="450" height="420" className="overflow-visible min-w-[450px]">
-              <defs>
-                {/* Arrowhead marker for edges */}
-                <marker id="radar-arrow" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#0891b2" />
-                </marker>
-                <marker id="radar-arrow-mule" viewBox="0 0 10 10" refX="28" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                  <path d="M 0 1 L 10 5 L 0 9 z" fill="#ef4444" />
-                </marker>
-
-                {/* Soft glow filter */}
-                <filter id="cyan-glow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="3" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-                <filter id="mule-glow" x="-50%" y="-50%" width="200%" height="200%">
-                  <feGaussianBlur stdDeviation="5" result="blur" />
-                  <feMerge>
-                    <feMergeNode in="blur" />
-                    <feMergeNode in="SourceGraphic" />
-                  </feMerge>
-                </filter>
-              </defs>
-
-              {/* Background grid dots */}
-              <pattern id="radar-dots" width="20" height="20" patternUnits="userSpaceOnUse">
-                <circle cx="2" cy="2" r="1" fill="#1f2937" opacity="0.6" />
-              </pattern>
-              <rect width="450" height="420" fill="url(#radar-dots)" />
-
-              {/* Dynamic Edges */}
-              {edges.map((edge) => {
-                const fromNode = nodes.find((n) => n.id === edge.from || n.address.toLowerCase() === edge.from.toLowerCase());
-                const toNode = nodes.find((n) => n.id === edge.to || n.address.toLowerCase() === edge.to.toLowerCase());
-                if (!fromNode || !toNode) return null;
-
-                const isMuleEdge = edge.kind === "mule" || toNode.kind === "mule";
-                const isSuspicious = edge.kind === "suspicious" || toNode.kind === "suspicious";
-
-                const strokeColor = isMuleEdge ? "#ef4444" : isSuspicious ? "#f59e0b" : "#0891b2";
-                const markerId = isMuleEdge ? "url(#radar-arrow-mule)" : "url(#radar-arrow)";
-                const pathD = `M ${fromNode.x} ${fromNode.y} L ${toNode.x} ${toNode.y}`;
-
-                return (
-                  <g key={edge.id}>
-                    {/* Semi-transparent line */}
-                    <path
-                      d={pathD}
-                      stroke={strokeColor}
-                      strokeWidth="2"
-                      strokeOpacity="0.45"
-                      fill="none"
-                      markerEnd={markerId}
-                      className="cursor-pointer hover:stroke-opacity-100 transition-all"
-                      onMouseEnter={() =>
-                        setHoveredEdge({
-                          amount: edge.amount,
-                          gas: "21,000 gas",
-                          block: "MST Confirmed",
-                          timestamp: edge.timestamp,
-                        })
-                      }
-                      onMouseLeave={() => setHoveredEdge(null)}
-                    />
-
-                    {/* Tiny moving dot showing fund flow */}
-                    {isPlaying && (
-                      <circle r="2.5" fill={isMuleEdge ? "#ef4444" : "#22d3ee"}>
-                        <animateMotion
-                          path={pathD}
-                          dur={`${(2.2 / animationSpeed).toFixed(1)}s`}
-                          repeatCount="indefinite"
-                        />
-                      </circle>
-                    )}
-                  </g>
-                );
-              })}
-
-              {/* Active Packet Animation (larger glowing dot + amount label) */}
-              {activePacket && (
-                <g>
-                  <circle
-                    r="5"
-                    fill={activePacket.isMule ? "#ef4444" : "#22d3ee"}
-                    filter={activePacket.isMule ? "url(#mule-glow)" : "url(#cyan-glow)"}
-                  >
-                    <animateMotion
-                      path={`M ${activePacket.from.x} ${activePacket.from.y} L ${activePacket.to.x} ${activePacket.to.y}`}
-                      dur={`${(2.0 / animationSpeed).toFixed(1)}s`}
-                      repeatCount="1"
-                    />
-                  </circle>
-                  <text
-                    fontSize="9"
-                    fontFamily="monospace"
-                    fill="#e5e7eb"
-                    fontWeight="bold"
-                    textAnchor="middle"
-                  >
-                    <animateMotion
-                      path={`M ${activePacket.from.x} ${activePacket.from.y - 10} L ${activePacket.to.x} ${activePacket.to.y - 10}`}
-                      dur={`${(2.0 / animationSpeed).toFixed(1)}s`}
-                      repeatCount="1"
-                    />
-                    {activePacket.amount}
-                  </text>
-                </g>
-              )}
-
-              {/* Dynamic Nodes */}
-              {nodes.map((node) => {
-                const isSelected = selectedNodeId === node.id;
-                const isContract = node.type === "contract";
-                const isMule = node.kind === "mule";
-                const isSuspicious = node.kind === "suspicious";
-
-                const nodeColor = isMule ? "#ef4444" : isSuspicious ? "#f59e0b" : isContract ? "#8b5cf6" : "#06b6d4";
-
-                return (
-                  <g
-                    key={node.id}
-                    className="cursor-pointer group"
-                    onClick={() => setSelectedNodeId(node.id)}
-                  >
-                    {/* Soft red glow / pulse ring on mule nodes */}
-                    {isMule && (
-                      <circle
-                        cx={node.x}
-                        cy={node.y}
-                        r="34"
-                        fill="rgba(239, 68, 68, 0.2)"
-                        stroke="#ef4444"
-                        strokeWidth="1.5"
-                        strokeDasharray="3 3"
-                        className="animate-pulse"
-                      />
-                    )}
-
-                    {/* Outer selection ring if selected */}
-                    {isSelected && (
-                      <circle
-                        cx={node.x}
-                        cy={node.y}
-                        r="30"
-                        fill="none"
-                        stroke={nodeColor}
-                        strokeWidth="2.5"
-                        opacity="0.9"
-                        className="animate-pulse"
-                      />
-                    )}
-
-                    {/* Shape: Rounded square for contract nodes, circle for wallet nodes */}
-                    {isContract ? (
-                      <rect
-                        x={node.x - 20}
-                        y={node.y - 20}
-                        width="40"
-                        height="40"
-                        rx="8"
-                        fill="#111827"
-                        stroke={nodeColor}
-                        strokeWidth="2"
-                        className="transition-transform group-hover:scale-105"
-                      />
-                    ) : (
-                      <circle
-                        cx={node.x}
-                        cy={node.y}
-                        r="22"
-                        fill="#0B0B0E"
-                        stroke={nodeColor}
-                        strokeWidth="2"
-                        className="transition-transform group-hover:scale-105"
-                      />
-                    )}
-
-                    {/* Node Short Label */}
-                    <text
-                      x={node.x}
-                      y={isContract ? node.y - 2 : node.y - 1}
-                      textAnchor="middle"
-                      fill="#FFFFFF"
-                      fontSize="8.5"
-                      fontWeight="bold"
-                      fontFamily="monospace"
-                    >
-                      {node.shortLabel}
-                    </text>
-
-                    {/* Status Dot inside node */}
-                    <circle
-                      cx={node.x}
-                      cy={node.y + 9}
-                      r="2.5"
-                      fill={nodeColor}
-                    />
-
-                    {/* Monospace label placed just below each node */}
-                    <text
-                      x={node.x}
-                      y={node.y + 32}
-                      textAnchor="middle"
-                      fill="#9CA3AF"
-                      fontSize="9"
-                      fontFamily="monospace"
-                      fontWeight="500"
-                    >
-                      {node.name.split(" ")[0]}
-                    </text>
-                  </g>
-                );
-              })}
-            </svg>
-
-            {/* Edge Tooltip */}
-            {hoveredEdge && (
-              <div className="absolute top-8 left-1/2 -translate-x-1/2 p-2.5 rounded bg-[#111827] text-white text-[11px] font-mono shadow-xl space-y-0.5 pointer-events-none z-20 border border-gray-700">
-                <div className="text-cyan-400 font-bold">Fund Transmission Edge</div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-gray-400">Payload:</span>
-                  <span className="text-accent-green font-semibold">{hoveredEdge.amount}</span>
-                </div>
-                <div className="flex justify-between gap-4">
-                  <span className="text-gray-400">Status & Block:</span>
-                  <span>{hoveredEdge.gas} · {hoveredEdge.block}</span>
-                </div>
+            {activeEdgePacket && (
+              <div className="text-[11px] text-cyan-400 font-mono animate-pulse">
+                EVENT: {activeEdgePacket.amount || "Execution"} ({activeEdgePacket.txHash?.slice(0, 10)}…)
               </div>
             )}
           </div>
 
-          {/* Full Legend matching all node types & states */}
-          <div className="pt-3 border-t border-[#1E1E24] flex flex-wrap items-center justify-between gap-3 text-[10px] font-mono text-[#9CA3AF]">
-            <div className="flex flex-wrap items-center gap-4">
-              <span className="flex items-center gap-1.5 text-cyan-400 font-semibold">
-                <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" /> Normal (Cyan)
-              </span>
-              <span className="flex items-center gap-1.5 text-accent-amber font-semibold">
-                <span className="w-2.5 h-2.5 rounded-full bg-accent-amber" /> Suspicious (Orange)
-              </span>
-              <span className="flex items-center gap-1.5 text-accent-red font-semibold">
-                <span className="w-2.5 h-2.5 rounded-full bg-accent-red animate-pulse" /> Mule Aggregator (Red)
-              </span>
-              <span className="flex items-center gap-1.5 text-purple-400 font-semibold">
-                <span className="w-2.5 h-2.5 rounded-xs bg-purple-500" /> Contract Vault (Purple)
-              </span>
-              <span className="flex items-center gap-1.5 text-cyan-300">
-                <span className="w-4 h-0.5 bg-cyan-500" /> Fund Flow Edge
-              </span>
-            </div>
-            <span className="text-accent-green font-bold">● SSE Stream Synchronized</span>
-          </div>
-        </div>
-
-        {/* Right Column (5 cols): Transaction Feed Panel & Transfer Controls */}
-        <div className="lg:col-span-5 space-y-4">
-          {/* 1. Transaction Feed Panel (Dark card matching canvas, monospace text, colored rows) */}
-          <div className="bg-[#0B0B0E] border border-[#1E1E24] rounded-lg shadow-sm p-4 font-mono text-xs flex flex-col justify-between min-h-[260px]">
-            <div>
-              <div className="flex items-center justify-between border-b border-[#1E1E24] pb-2 mb-2.5">
-                <div className="flex items-center gap-2">
-                  <Activity className="w-3.5 h-3.5 text-accent-blue" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-white">
-                    TYPOLOGY TRANSACTION FEED
-                  </span>
-                </div>
-                <span className="text-[10px] text-accent-green font-semibold">
-                  ● Real-time
-                </span>
+          {/* SVG Canvas */}
+          <div className="flex-1 relative flex items-center justify-center p-4">
+            {loading ? (
+              <div className="text-center space-y-2 py-24 text-gray-500 font-mono text-xs">
+                <div className="w-6 h-6 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin mx-auto" />
+                <p>Loading real on-chain topology from {cfg.network}…</p>
               </div>
+            ) : !clientAddress ? (
+              <div className="text-center space-y-3 py-24 text-gray-400 font-mono text-xs">
+                <Wallet className="w-10 h-10 text-gray-600 mx-auto" />
+                <p className="text-sm font-semibold text-white">No Wallet Connected</p>
+                <p className="text-gray-500 max-w-sm mx-auto">
+                  Connect your Web3 wallet using the top navigation bar to render customer escrow topology.
+                </p>
+              </div>
+            ) : (
+              <svg
+                viewBox={`${viewBox.x} ${viewBox.y} ${viewBox.width} ${viewBox.height}`}
+                className="w-full h-full select-none"
+              >
+                <defs>
+                  {/* Arrowhead marker */}
+                  <marker
+                    id="map-arrow"
+                    viewBox="0 0 10 10"
+                    refX="26"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#4B5563" />
+                  </marker>
+                  <marker
+                    id="map-arrow-active"
+                    viewBox="0 0 10 10"
+                    refX="26"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#22D3EE" />
+                  </marker>
+                  <marker
+                    id="map-arrow-error"
+                    viewBox="0 0 10 10"
+                    refX="26"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 1 L 10 5 L 0 9 z" fill="#EF4444" />
+                  </marker>
+                </defs>
 
-              {/* Feed items */}
-              <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
-                {feedTxs.map((tx, idx) => {
-                  const isMule = tx.nodeType === "mule" || tx.status === "failed";
-                  const isPending = tx.status === "pending" || tx.nodeType === "suspicious";
+                {/* 1. EDGES */}
+                {edges.map((edge) => {
+                  const fromNode = nodes.find((n) => n.id === edge.from);
+                  const toNode = nodes.find((n) => n.id === edge.to);
+                  if (!fromNode || !toNode) return null;
 
-                  const toneClass = isMule
-                    ? "border-red-900/60 bg-red-950/30 text-red-400"
+                  const isActive = activeEdgeId === edge.id;
+                  const isPending = Boolean(edge.isPending);
+                  const isError = Boolean(edge.isError);
+
+                  const strokeColor = isError
+                    ? "#EF4444"
+                    : isActive
+                    ? "#22D3EE"
                     : isPending
-                    ? "border-amber-900/60 bg-amber-950/30 text-amber-400"
-                    : "border-cyan-900/60 bg-cyan-950/20 text-cyan-300";
+                    ? "#F59E0B"
+                    : "#374151";
+
+                  const strokeWidth = isActive || isPending ? 2.5 : 1.5;
+                  const strokeDash = isPending ? "6,4" : "none";
+                  const markerId = isError
+                    ? "url(#map-arrow-error)"
+                    : isActive
+                    ? "url(#map-arrow-active)"
+                    : "url(#map-arrow)";
+
+                  const midX = (fromNode.x + toNode.x) / 2;
+                  const midY = (fromNode.y + toNode.y) / 2 - 8;
 
                   return (
-                    <div
-                      key={tx.id || idx}
-                      className={`p-2 rounded border flex items-center justify-between text-[11px] font-mono transition-all ${toneClass}`}
-                    >
-                      <div className="truncate mr-2">
-                        <div className="font-bold flex items-center gap-1.5">
-                          <span className="uppercase text-[9px] px-1.5 py-0.2 rounded bg-black/40 border border-white/10">
-                            {tx.type}
-                          </span>
-                          <span className="truncate">{tx.txHash ? `${tx.txHash.slice(0, 10)}…` : "Pending tx"}</span>
-                        </div>
-                        <div className="text-[10px] opacity-75 truncate mt-0.5">
-                          From: {tx.from.slice(0, 8)}… → To: {tx.to.slice(0, 8)}…
-                        </div>
-                      </div>
+                    <g key={edge.id}>
+                      <line
+                        x1={fromNode.x}
+                        y1={fromNode.y}
+                        x2={toNode.x}
+                        y2={toNode.y}
+                        stroke={strokeColor}
+                        strokeWidth={strokeWidth}
+                        strokeDasharray={strokeDash}
+                        markerEnd={markerId}
+                        className="transition-colors duration-300"
+                      />
 
-                      <div className="text-right flex-shrink-0">
-                        <span className="font-bold block">{tx.amount}</span>
-                        <span className="text-[9px] uppercase opacity-75 block">{tx.status}</span>
-                      </div>
-                    </div>
+                      {/* Edge Label */}
+                      <text
+                        x={midX}
+                        y={midY}
+                        fill={isActive ? "#22D3EE" : isError ? "#EF4444" : "#9CA3AF"}
+                        fontSize="10"
+                        fontFamily="monospace"
+                        textAnchor="middle"
+                        className="select-none pointer-events-none"
+                      >
+                        {edge.label}
+                      </text>
+
+                      {/* Single animated dot on real event */}
+                      {isActive && (
+                        <circle r="4" fill="#22D3EE">
+                          <animateMotion
+                            path={`M ${fromNode.x} ${fromNode.y} L ${toNode.x} ${toNode.y}`}
+                            dur="1.2s"
+                            repeatCount="1"
+                            fill="freeze"
+                          />
+                        </circle>
+                      )}
+                    </g>
                   );
                 })}
 
-                {feedTxs.length === 0 && (
-                  <div className="py-8 text-center text-[#6B7280]">
-                    Listening for on-chain & simulated transactions…
+                {/* 2. NODES */}
+                {nodes.map((node) => {
+                  const isSelected = selectedNodeId === node.id;
+                  const color =
+                    node.kind === "customer"
+                      ? "#22D3EE"
+                      : node.kind === "machine"
+                      ? "#10B981"
+                      : node.kind === "verifier"
+                      ? "#F59E0B"
+                      : "#8B5CF6";
+
+                  return (
+                    <g
+                      key={node.id}
+                      onClick={() => setSelectedNodeId(node.id)}
+                      className="cursor-pointer group"
+                    >
+                      {/* Selection Ring */}
+                      {isSelected && (
+                        <circle
+                          cx={node.x}
+                          cy={node.y}
+                          r="28"
+                          fill="none"
+                          stroke={color}
+                          strokeWidth="2"
+                          strokeDasharray="4,2"
+                          className="opacity-70 animate-spin-slow"
+                        />
+                      )}
+
+                      {/* Node Circle */}
+                      <circle
+                        cx={node.x}
+                        cy={node.y}
+                        r="20"
+                        fill="#141419"
+                        stroke={color}
+                        strokeWidth="2"
+                        className="transition-transform group-hover:scale-110"
+                      />
+
+                      {/* Center Dot */}
+                      <circle cx={node.x} cy={node.y} r="5" fill={color} />
+
+                      {/* Label sitting neatly below circle without overlapping */}
+                      <text
+                        x={node.x}
+                        y={node.y + 36}
+                        fill="#FFFFFF"
+                        fontSize="11"
+                        fontWeight="bold"
+                        fontFamily="monospace"
+                        textAnchor="middle"
+                      >
+                        {node.label}
+                      </text>
+
+                      {/* Sub-label */}
+                      {node.subLabel && (
+                        <text
+                          x={node.x}
+                          y={node.y + 48}
+                          fill="#9CA3AF"
+                          fontSize="9"
+                          fontFamily="monospace"
+                          textAnchor="middle"
+                        >
+                          {node.subLabel}
+                        </text>
+                      )}
+                    </g>
+                  );
+                })}
+              </svg>
+            )}
+          </div>
+        </div>
+
+        {/* Right: Inspector + Create Job + Feed */}
+        <div className="lg:col-span-4 space-y-6">
+          {/* Node Inspector Card */}
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-4 shadow-xs">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-3">
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-2.5 h-2.5 rounded-full"
+                  style={{
+                    backgroundColor:
+                      selectedNode?.kind === "customer"
+                        ? "#22D3EE"
+                        : selectedNode?.kind === "machine"
+                        ? "#10B981"
+                        : selectedNode?.kind === "verifier"
+                        ? "#F59E0B"
+                        : "#8B5CF6",
+                  }}
+                />
+                <h3 className="text-xs font-bold uppercase tracking-wider text-gray-900 font-mono">
+                  {selectedNode?.label || "Node Details"}
+                </h3>
+              </div>
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-gray-100 text-gray-700">
+                {selectedNode?.kind.toUpperCase()}
+              </span>
+            </div>
+
+            {selectedNode && (
+              <div className="space-y-3 font-mono text-xs">
+                <div>
+                  <span className="text-gray-500 text-[10px] uppercase">Address</span>
+                  <div className="flex items-center justify-between gap-2 mt-0.5 p-2 rounded bg-gray-50 border border-gray-200 text-gray-900">
+                    <span className="truncate">
+                      {selectedNode.address.slice(0, 10)}…{selectedNode.address.slice(-8)}
+                    </span>
+                    <button
+                      onClick={() => copyText("addr", selectedNode.address)}
+                      className="text-gray-500 hover:text-gray-900"
+                    >
+                      {copiedKey === "addr" ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <span className="text-gray-500 text-[10px] uppercase">Balance</span>
+                  <div className="text-sm font-bold text-gray-900 mt-0.5">
+                    {selectedNode.balance} {NATIVE_SYMBOL}
+                  </div>
+                </div>
+
+                {selectedNode.details && (
+                  <div className="p-2.5 rounded bg-gray-50 border border-gray-200 text-[11px] space-y-1.5 text-gray-700">
+                    {Object.entries(selectedNode.details).map(([k, v]) => (
+                      <div key={k} className="flex justify-between gap-2">
+                        <span className="text-gray-500">{k}:</span>
+                        <span className="font-semibold text-gray-900 truncate max-w-[160px]">
+                          {String(v)}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>
-            </div>
-
-            <div className="pt-2 border-t border-[#1E1E24] text-[10px] text-[#6B7280] flex justify-between">
-              <span>Feed buffer: {feedTxs.length} items</span>
-              <span>Transport: SSE / WS :4000</span>
-            </div>
+            )}
           </div>
 
-          {/* 2. Selected Node Inspector & ETH Transfer Panel */}
-          <div className="bg-card border border-border rounded-lg shadow-sm p-4 space-y-4">
-            <div className="flex items-center justify-between border-b border-border pb-2.5">
+          {/* Create Job Form (Replaces Direct Transfer Form) */}
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-3 shadow-xs">
+            <div className="border-b border-gray-100 pb-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-900 font-mono">
+                Create Escrow Job
+              </h3>
+              <p className="text-[11px] text-gray-500">
+                Deposit funds directly into JobEscrow contract
+              </p>
+            </div>
+
+            <form onSubmit={handleCreateJob} className="space-y-3 font-mono text-xs">
               <div>
-                <h3 className="text-xs font-bold text-primary tracking-tight font-mono">
-                  {activeNode.name}
-                </h3>
-                <span className="text-[11px] text-secondary font-mono">
-                  {activeNode.type === "wallet" ? "Hardware / EOA Node" : "Smart Contract Vault"}
-                </span>
+                <label className="text-gray-500 text-[10px] uppercase">Description</label>
+                <input
+                  type="text"
+                  value={formDescription}
+                  onChange={(e) => setFormDescription(e.target.value)}
+                  disabled={formSubmitting}
+                  className="w-full mt-1 px-3 py-2 rounded border border-gray-200 bg-gray-50 text-gray-900 outline-none focus:border-blue-500"
+                />
               </div>
-              <span
-                className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full ${
-                  activeNode.kind === "mule"
-                    ? "pill-failed"
-                    : activeNode.kind === "suspicious"
-                    ? "pill-pending"
-                    : "pill-confirmed"
-                }`}
-              >
-                {activeNode.status}
-              </span>
-            </div>
 
-            {/* Address with Copy */}
-            <div className="p-2 rounded bg-page border border-border flex items-center justify-between text-[11px] font-mono">
-              <span className="text-primary truncate mr-2">{activeNode.address}</span>
-              <button
-                onClick={() => handleCopy(activeNode.address, "addr")}
-                className="text-secondary hover:text-primary flex-shrink-0"
-              >
-                {copiedKey === "addr" ? <Check className="w-3.5 h-3.5 text-accent-green" /> : <Copy className="w-3.5 h-3.5" />}
-              </button>
-            </div>
-
-            {/* Metric grid */}
-            <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
-              <div className="p-2 rounded border border-border bg-[#FAFAFB]">
-                <span className="text-[10px] text-secondary block">Balance</span>
-                <span className="font-bold text-primary">{activeNode.balance}</span>
-              </div>
-              <div className="p-2 rounded border border-border bg-[#FAFAFB]">
-                <span className="text-[10px] text-secondary block">Transactions</span>
-                <span className="font-bold text-accent-green">{activeNode.txCounts.confirmed} confirmed</span>
-              </div>
-            </div>
-
-            {/* On-Chain ETH Transfer Trigger */}
-            <div className="pt-2 border-t border-border space-y-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-primary font-mono block">
-                Execute On-Chain Transfer
-              </span>
-
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-[10px] font-mono text-secondary block mb-1">Target</label>
-                  <select
-                    value={transferTarget}
-                    onChange={(e) => setTransferTarget(e.target.value)}
-                    className="w-full bg-page border border-border rounded px-2 py-1 text-xs text-primary font-mono focus:outline-none focus:border-accent-blue"
-                  >
-                    <option value="machine">Machine M-042</option>
-                    <option value="escrow">JobEscrow Contract</option>
-                    <option value="registry">MachineRegistry</option>
-                  </select>
+                  <label className="text-gray-500 text-[10px] uppercase">
+                    Reward ({NATIVE_SYMBOL})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={formReward}
+                    onChange={(e) => setFormReward(e.target.value)}
+                    disabled={formSubmitting}
+                    className="w-full mt-1 px-3 py-2 rounded border border-gray-200 bg-gray-50 text-gray-900 outline-none focus:border-blue-500 font-bold"
+                  />
                 </div>
                 <div>
-                  <label className="text-[10px] font-mono text-secondary block mb-1">Amount (ETH)</label>
+                  <label className="text-gray-500 text-[10px] uppercase">Expiry (Mins)</label>
                   <input
-                    type="text"
-                    value={transferAmount}
-                    onChange={(e) => setTransferAmount(e.target.value)}
-                    className="w-full bg-page border border-border rounded px-2 py-1 text-xs text-primary font-mono focus:outline-none focus:border-accent-blue"
+                    type="number"
+                    value={formDurationMinutes}
+                    onChange={(e) => setFormDurationMinutes(e.target.value)}
+                    disabled={formSubmitting}
+                    className="w-full mt-1 px-3 py-2 rounded border border-gray-200 bg-gray-50 text-gray-900 outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
 
-              {transferError && (
-                <div className="p-1.5 rounded bg-red-50 border border-red-200 text-xs text-accent-red font-mono">
-                  {transferError}
+              {formTxStatus && (
+                <div className="p-2 rounded bg-blue-50 border border-blue-200 text-blue-800 text-[11px]">
+                  {formTxStatus}
                 </div>
               )}
 
-              {transferTxHash && (
-                <div className="p-1.5 rounded bg-green-50 border border-green-200 text-[10px] text-accent-green font-mono truncate">
-                  Tx: {transferTxHash}
+              {formError && (
+                <div className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px]">
+                  {formError}
                 </div>
               )}
 
               <button
-                onClick={handleSendEth}
-                disabled={transferStatus === "signing" || transferStatus === "pending" || transferStatus === "confirming"}
-                className="w-full py-1.5 rounded bg-accent-blue hover:bg-blue-600 text-white font-bold text-xs flex items-center justify-center gap-1.5 transition-all disabled:opacity-50 shadow-sm"
+                type="submit"
+                disabled={formSubmitting || !signer}
+                className="w-full flex items-center justify-center gap-1.5 py-2.5 px-4 rounded bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs transition-colors shadow-xs"
               >
                 <Send className="w-3.5 h-3.5" />
                 <span>
-                  {transferStatus === "signing"
-                    ? "Sign in Wallet..."
-                    : transferStatus === "pending" || transferStatus === "confirming"
-                    ? "Confirming on Chain..."
-                    : `Send ${transferAmount} ETH`}
+                  {formSubmitting
+                    ? "Locking Funds…"
+                    : `Lock ${formReward} ${NATIVE_SYMBOL} & Create Job`}
                 </span>
               </button>
+            </form>
+          </div>
+
+          {/* Real Contract Event Feed */}
+          <div className="bg-white border border-gray-200 rounded-lg p-5 space-y-3 shadow-xs">
+            <div className="flex items-center justify-between border-b border-gray-100 pb-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-900 font-mono">
+                Contract Activity Feed
+              </h3>
+              <label className="flex items-center gap-1.5 text-[10px] text-gray-500 font-mono cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={filterMyEvents}
+                  onChange={(e) => setFilterMyEvents(e.target.checked)}
+                  className="rounded border-gray-300 text-blue-600"
+                />
+                <span>My Events Only</span>
+              </label>
+            </div>
+
+            <div className="space-y-2 max-h-56 overflow-y-auto font-mono text-xs">
+              {filteredFeed.length === 0 ? (
+                <div className="text-center py-6 text-gray-400 text-xs">
+                  No activity yet.
+                </div>
+              ) : (
+                filteredFeed.map((ev) => (
+                  <div
+                    key={ev.id}
+                    className="p-2.5 rounded bg-gray-50 border border-gray-200 space-y-1"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-gray-900">{ev.name}</span>
+                      <span className="text-[10px] text-gray-400">{ev.timestamp}</span>
+                    </div>
+                    <p className="text-[11px] text-gray-600 truncate">{ev.summary}</p>
+                    <div className="flex justify-between items-center text-[10px] text-gray-400 pt-1">
+                      <span>Tx: {ev.txHash.slice(0, 10)}…</span>
+                      {ev.amount && (
+                        <span className="font-semibold text-emerald-600">
+                          {ev.amount} {NATIVE_SYMBOL}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

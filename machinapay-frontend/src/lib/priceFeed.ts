@@ -24,11 +24,10 @@ export const priceFeed = {
         }
       }
     } catch {
-      // Fallback: simulated market price with minor variance
+      // Deterministic fallback if API is unreachable
     }
 
-    // Fallback price with subtle random tick for realism
-    cachedEthPrice = 2854.25 + (Math.sin(now / 50000) * 12.5);
+    cachedEthPrice = 2850.0;
     lastFetchTime = now;
     return cachedEthPrice;
   },
