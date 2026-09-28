@@ -631,11 +631,14 @@ export function WalletMapView({
             <span>Fit</span>
           </button>
           <button
-            onClick={loadChainData}
+            onClick={() => {
+              setActiveEdgeId(null);
+              setActiveEdgePacket(null);
+              setSelectedNodeId("customer");
+            }}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded border border-gray-200 bg-white hover:bg-gray-50 text-xs font-medium text-gray-700 transition-colors"
           >
-            <RotateCcw className="w-3.5 h-3.5" />
-            <span>Refresh</span>
+            <span>Clear</span>
           </button>
         </div>
       </div>
@@ -667,13 +670,10 @@ export function WalletMapView({
                 <span className="w-2.5 h-2.5 rounded-full bg-cyan-400" /> Customer
               </span>
               <span className="flex items-center gap-1.5 text-gray-300">
-                <span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Contract
-              </span>
-              <span className="flex items-center gap-1.5 text-gray-300">
                 <span className="w-2.5 h-2.5 rounded-full bg-emerald-400" /> Machine
               </span>
               <span className="flex items-center gap-1.5 text-gray-300">
-                <span className="w-2.5 h-2.5 rounded-full bg-amber-400" /> Verifier
+                <span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Contract
               </span>
             </div>
 
