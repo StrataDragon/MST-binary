@@ -1,0 +1,517 @@
+:root {
+  --bg: #0b0d11;
+  --panel: rgba(20, 23, 29, 0.82);
+  --panel-solid: #14171d;
+  --border: rgba(120, 133, 155, 0.22);
+  --border-strong: rgba(120, 133, 155, 0.4);
+  --text: #e8eaed;
+  --text-muted: #7b8494;
+  --amber: #f5a623;
+  --amber-dim: #a76f1c;
+  --green: #3adb76;
+  --red: #ff5c5c;
+  --cyan: #3ddc97;
+
+  --font-display: "Space Grotesk", "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+
+/* ---------- app shell: real grid layout, canvas never overlaps the HUD ---------- */
+
+.app-shell {
+  display: grid;
+  grid-template-rows: auto 1fr auto auto;
+  width: 100vw;
+  height: 100vh;
+  gap: 12px;
+  padding: 16px;
+}
+
+.app-header {
+  animation: hud-drop 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.app-main {
+  display: grid;
+  grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(240px, 300px);
+  gap: 16px;
+  min-height: 0;
+}
+
+.side-panel {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  animation: hud-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both;
+}
+
+.side-panel.left {
+  display: flex;
+  flex-direction: column;
+}
+
+.side-panel.right {
+  display: flex;
+  flex-direction: column;
+}
+
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0b0d11;
+}
+
+.stage-overlay {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  z-index: 3;
+  pointer-events: none;
+  width: max-content;
+  max-width: calc(100% - 32px);
+}
+
+.app-footer {
+  display: flex;
+  justify-content: center;
+  min-height: 0;
+}
+
+/* one orchestrated entrance for the whole HUD on load */
+
+@keyframes hud-drop {
+  from {
+    opacity: 0;
+    transform: translateY(-14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@keyframes hud-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* faint scanline texture over the 3D stage only, for a control-room feel */
+.stage-scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(255, 255, 255, 0.018) 0px,
+    rgba(255, 255, 255, 0.018) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  mix-blend-mode: overlay;
+  z-index: 2;
+}
+
+.stage-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  box-shadow: inset 0 0 120px 30px rgba(0, 0, 0, 0.55);
+  z-index: 1;
+}
+
+/* ---------- top status bar ---------- */
+
+.top-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.brand-name {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+}
+
+.brand-sub {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--amber);
+  font-weight: 500;
+}
+
+.top-metrics {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.metric-chip {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(10px);
+  border-radius: 3px;
+  padding: 7px 13px;
+  min-width: 128px;
+}
+
+.metric-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 0.09em;
+  margin-bottom: 3px;
+}
+
+.metric-value {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dot.online {
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+}
+.dot.offline {
+  background: var(--red);
+  box-shadow: 0 0 8px var(--red);
+}
+.dot.pending {
+  background: var(--amber);
+  box-shadow: 0 0 8px var(--amber);
+  animation: blink 1.1s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* ---------- state banner, sits centered over the 3D stage ---------- */
+
+.state-banner {
+  text-align: center;
+  pointer-events: auto;
+}
+
+.state-banner .state-text {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--amber);
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  padding: 8px 22px;
+  border-radius: 3px;
+  backdrop-filter: blur(10px);
+}
+
+.state-banner .state-text.completed {
+  color: var(--green);
+}
+.state-banner .state-text.failed {
+  color: var(--red);
+}
+
+/* ---------- bottom row ---------- */
+
+.bottom-row {
+  margin-top: auto;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+/* ---------- side panels ---------- */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  backdrop-filter: blur(10px);
+  padding: 14px 16px;
+}
+
+.panel-title {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  font-weight: 600;
+}
+
+/* job details panel */
+
+.job-panel {
+  width: 100%;
+}
+
+.job-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12.5px;
+  padding: 4px 0;
+  border-bottom: 1px dashed var(--border);
+}
+
+.job-row:last-child {
+  border-bottom: none;
+}
+
+.job-row .k {
+  color: var(--text-muted);
+}
+
+.job-row .v {
+  font-weight: 600;
+  text-align: right;
+}
+
+.job-empty {
+  font-size: 12.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+/* timeline panel */
+
+.timeline-panel {
+  width: 100%;
+}
+
+.timeline-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+  padding: 3.5px 0;
+  color: var(--text-muted);
+}
+
+.timeline-item.done {
+  color: var(--text);
+}
+
+.timeline-item .check {
+  width: 15px;
+  height: 15px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: transparent;
+}
+
+.timeline-item.done .check {
+  background: var(--green);
+  border-color: var(--green);
+  color: #0b0d11;
+}
+
+.timeline-item.active .check {
+  border-color: var(--amber);
+  box-shadow: 0 0 6px var(--amber);
+}
+
+/* progress bar under active step */
+
+.progress-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+  margin: 10px 0 2px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--amber);
+  transition: width 0.05s linear;
+}
+
+/* ---------- telemetry row ---------- */
+
+.telemetry-row {
+  animation: hud-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.18s both;
+}
+
+.telemetry-panel {
+  width: 100%;
+  padding: 10px 16px;
+}
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+  gap: 12px;
+}
+
+.telemetry-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-right: 1px dashed var(--border);
+  padding-right: 12px;
+}
+
+.telemetry-cell:last-child {
+  border-right: none;
+}
+
+/* mock controls */
+
+.mock-panel {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.mock-btn {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 9px 16px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: rgba(245, 166, 35, 0.1);
+  color: var(--amber);
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.mock-btn:hover {
+  background: rgba(245, 166, 35, 0.2);
+}
+
+.mock-btn:active {
+  transform: scale(0.97);
+}
+
+.mock-btn.fail {
+  background: rgba(255, 92, 92, 0.08);
+  color: var(--red);
+  border-color: rgba(255, 92, 92, 0.35);
+}
+
+.mock-btn.fail:hover {
+  background: rgba(255, 92, 92, 0.18);
+}
+
+.mock-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.mock-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.08em;
+}
+
+.mock-select {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 9px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.mock-select:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* result toast */
+
+.result-toast {
+  text-align: center;
+  padding: 10px 20px;
+  border-radius: 4px;
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  backdrop-filter: blur(10px);
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  pointer-events: auto;
+}
+
+.result-toast.success {
+  color: var(--green);
+  border-color: rgba(58, 219, 118, 0.4);
+}
+
+.result-toast.fail {
+  color: var(--red);
+  border-color: rgba(255, 92, 92, 0.4);
+}

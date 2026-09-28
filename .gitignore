@@ -1,0 +1,25 @@
+# secrets — NEVER commit
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# build output
+node_modules/
+cache/
+artifacts/
+typechain-types/
+coverage/
+coverage.json
+dist/
+
+# local-only deployments (public MST deployment file IS committed: deployments/mst-testnet.json)
+deployments/localhost.json
+deployments/hardhat.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

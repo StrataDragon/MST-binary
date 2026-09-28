@@ -1,0 +1,21 @@
+{
+  "network": "localhost",
+  "chainId": 31337,
+  "machineId": "M-042",
+  "machineIdBytes32": "0x4d2d303432000000000000000000000000000000000000000000000000000000",
+  "machineWallet": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
+  "machineSigner": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
+  "job": {
+    "jobId": "0x0058df0a578022dbeb3769ed152d8a803f827fd6d070fe56141411b5186fb23e",
+    "description": "Move package A to green zone",
+    "metadataHash": "0xca4e8d754006ff4030785bb30ab5984e922b1d23b588adc2dfac3305a0ea9ade",
+    "reward": "100000000000000000000",
+    "deadline": "1790592020",
+    "customer": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8"
+  },
+  "transactions": {
+    "registerMachine": "0x8c38f7785e6cb124d5f2ccbb0f29c573fe89f611402c4b75d70e1eb5d39b4c92",
+    "createJob": "0x929bf35bf153afb804bf7ced38b747e37819b3f368e16dc9b4d375949c269f37"
+  },
+  "note": "Public info only. No private keys."
+}

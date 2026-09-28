@@ -1,0 +1,8 @@
+# secrets — NEVER commit
+.env
+.env.*
+!.env.example
+
+# dependencies & build
+node_modules/
+dist/

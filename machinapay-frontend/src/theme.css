@@ -1,0 +1,49 @@
+:root {
+  --bg-page: #F5F6F8;
+  --bg-card: #FFFFFF;
+  --border: #E5E7EB;
+  --text-primary: #111827;
+  --text-secondary: #6B7280;
+  --text-muted: #9CA3AF;
+  --accent-red: #EF4444;    /* danger / worst / high-risk */
+  --accent-green: #22C55E;  /* best / healthy / confirmed */
+  --accent-blue: #3B82F6;   /* info / custom / this-wallet */
+  --accent-amber: #F59E0B;  /* warning / pending */
+  --sidebar-bg: #0B0B0E;
+  --sidebar-text: #E5E7EB;
+  --sidebar-active-bg: rgba(255, 255, 255, 0.08);
+}
+
+/* SENTINEL Card styling */
+.sentinel-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  padding: 1.25rem;
+}
+
+/* SENTINEL Status Pills */
+.pill-confirmed {
+  background-color: rgba(34, 197, 94, 0.1);
+  color: #16a34a;
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.pill-pending {
+  background-color: rgba(245, 158, 11, 0.1);
+  color: #d97706;
+  border: 1px solid rgba(245, 158, 11, 0.25);
+}
+
+.pill-failed {
+  background-color: rgba(239, 68, 68, 0.1);
+  color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.pill-disputed {
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #2563eb;
+  border: 1px solid rgba(59, 130, 246, 0.25);
+}

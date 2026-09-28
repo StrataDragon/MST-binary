@@ -1,0 +1,31 @@
+{
+  "name": "machinapay-blockchain",
+  "version": "1.0.0",
+  "description": "MachinaPay blockchain module: MachineRegistry + JobEscrow on MST",
+  "private": true,
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "coverage": "hardhat coverage",
+    "node": "hardhat node",
+    "check:network": "hardhat run scripts/check-network.ts --network mst",
+    "deploy:local": "hardhat run scripts/deploy.ts --network localhost",
+    "deploy:mst": "hardhat run scripts/deploy.ts --network mst",
+    "seed:local": "hardhat run scripts/seed-demo.ts --network localhost",
+    "seed:mst": "hardhat run scripts/seed-demo.ts --network mst",
+    "export-abi": "hardhat run scripts/export-abi.ts",
+    "demo:local": "hardhat run scripts/demo-e2e.ts",
+    "smoke:mst": "hardhat run scripts/smoke-deploy.ts --network mst",
+    "smoke:local": "hardhat run scripts/smoke-deploy.ts"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "6.1.2",
+    "@openzeppelin/contracts": "5.1.0",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.10.0",
+    "dotenv": "^16.4.7",
+    "hardhat": "2.29.1",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.7.3"
+  }
+}

@@ -1,0 +1,46 @@
+name: MachinaPay CI
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+
+jobs:
+  blockchain-tests:
+    name: Blockchain Core Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+      - name: Install dependencies
+        run: npm ci
+      - name: Compile Contracts
+        run: npx hardhat compile
+      - name: Run Hardhat Tests
+        run: npm test
+
+  frontend-tests-and-build:
+    name: Frontend Tests & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: machinapay-frontend/package-lock.json
+      - name: Install Frontend Dependencies
+        working-directory: ./machinapay-frontend
+        run: npm ci
+      - name: Run Frontend Unit Tests
+        working-directory: ./machinapay-frontend
+        run: npm test
+      - name: Build Frontend Application
+        working-directory: ./machinapay-frontend
+        run: npm run build
