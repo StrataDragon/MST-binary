@@ -28,6 +28,27 @@ const mstExplorer = (import.meta as any).env?.VITE_MST_EXPLORER_URL || "https://
 const envRegistry = (import.meta as any).env?.VITE_MACHINE_REGISTRY_ADDRESS;
 const envEscrow = (import.meta as any).env?.VITE_JOB_ESCROW_ADDRESS;
 
+const defaultMstRegistry = "0x59C6f1181aCd6f133545E1D5b8582380ACC4196E";
+const defaultMstEscrow = "0x07134fd3d167f5E331A273722A54A88536331C2e";
+
+const resolvedRegistry =
+  envRegistry ||
+  (isLocal
+    ? rawContracts.addresses?.MachineRegistry
+    : rawContracts.chainId === 91562037
+    ? rawContracts.addresses?.MachineRegistry
+    : defaultMstRegistry) ||
+  defaultMstRegistry;
+
+const resolvedEscrow =
+  envEscrow ||
+  (isLocal
+    ? rawContracts.addresses?.JobEscrow
+    : rawContracts.chainId === 91562037
+    ? rawContracts.addresses?.JobEscrow
+    : defaultMstEscrow) ||
+  defaultMstEscrow;
+
 export const cfg: MachinaPayConfig = {
   network: isLocal ? (rawContracts.network || "localhost") : "MST Testnet",
   chainId: isLocal ? Number(rawContracts.chainId || 31337) : mstChainId,
@@ -35,15 +56,15 @@ export const cfg: MachinaPayConfig = {
   explorerUrl: isLocal ? rawContracts.explorerUrl : mstExplorer,
   nativeToken: isLocal ? "MSTC" : "tMSTC",
   addresses: {
-    MachineRegistry: envRegistry || rawContracts.addresses?.MachineRegistry || "0x0000000000000000000000000000000000000000",
-    JobEscrow: envEscrow || rawContracts.addresses?.JobEscrow || "0x0000000000000000000000000000000000000000",
+    MachineRegistry: resolvedRegistry,
+    JobEscrow: resolvedEscrow,
   },
   verifier: rawContracts.verifier || "0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225",
   eip712: {
     name: "MachinaPay JobEscrow",
     version: "1",
     chainId: isLocal ? Number(rawContracts.chainId || 31337) : mstChainId,
-    verifyingContract: envEscrow || rawContracts.addresses?.JobEscrow || "0x0000000000000000000000000000000000000000",
+    verifyingContract: resolvedEscrow,
   },
   abi: rawContracts.abi as any,
   backendUrl: (import.meta as any).env?.VITE_MEMBER3_API_URL || "http://localhost:4000",

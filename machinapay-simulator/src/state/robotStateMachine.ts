@@ -57,10 +57,12 @@ export type RunJobOptions = {
 export function runJob(options: RunJobOptions): { cancel: () => void } {
   let cancelled = false;
   let rafId = 0;
+  let phaseTimer = 0;
 
   const cancel = () => {
     cancelled = true;
     if (rafId) cancelAnimationFrame(rafId);
+    if (phaseTimer) window.clearTimeout(phaseTimer);
   };
 
   const playPhase = (index: number) => {
@@ -82,18 +84,14 @@ export function runJob(options: RunJobOptions): { cancel: () => void } {
     options.onPhaseEnter(phase);
     const duration = PHASE_DURATIONS_MS[phase];
     const startTime = performance.now();
+    let phaseAdvanced = false;
 
-    const tick = (now: number) => {
-      if (cancelled || options.isCancelled()) return;
-      const elapsed = now - startTime;
-      const progress = duration === 0 ? 1 : Math.min(1, elapsed / duration);
-      options.onTick(phase, progress);
-
-      if (progress < 1) {
-        rafId = requestAnimationFrame(tick);
-        return;
-      }
-
+    const advanceToNext = () => {
+      if (phaseAdvanced || cancelled || options.isCancelled()) return;
+      phaseAdvanced = true;
+      if (rafId) cancelAnimationFrame(rafId);
+      if (phaseTimer) window.clearTimeout(phaseTimer);
+      options.onTick(phase, 1);
       const nextIndex = index + 1;
       if (nextIndex >= JOB_PHASES.length) {
         options.onCompleted();
@@ -102,7 +100,25 @@ export function runJob(options: RunJobOptions): { cancel: () => void } {
       }
     };
 
+    const tick = (now: number) => {
+      if (phaseAdvanced || cancelled || options.isCancelled()) return;
+      const elapsed = now - startTime;
+      const progress = duration === 0 ? 1 : Math.min(1, elapsed / duration);
+      options.onTick(phase, progress);
+
+      if (progress < 1) {
+        rafId = requestAnimationFrame(tick);
+      } else {
+        advanceToNext();
+      }
+    };
+
     rafId = requestAnimationFrame(tick);
+    if (duration > 0) {
+      phaseTimer = window.setTimeout(advanceToNext, duration + 60);
+    } else {
+      advanceToNext();
+    }
   };
 
   playPhase(0);
