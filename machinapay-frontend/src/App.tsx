@@ -21,13 +21,14 @@ import { MarketplaceView } from "./components/MarketplaceView";
 import { DynamicPricingDashboard } from "./components/DynamicPricingDashboard";
 import { getReadProvider, getEscrow, getLiveBalance } from "./lib/wallet";
 import { cfg, NATIVE_SYMBOL } from "./lib/config";
-import { X } from "lucide-react";
+import { X, AlertTriangle, Copy, Check, ExternalLink } from "lucide-react";
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<SentinelTab>("marketplace");
   const [signer, setSigner] = useState<any>(null);
   const [address, setAddress] = useState<string | null>(null);
   const [clientBalance, setClientBalance] = useState<string>("0.0000");
+  const [copiedAddress, setCopiedAddress] = useState<boolean>(false);
   const [selectedTx, setSelectedTx] = useState<TxHistoryItem | null>(null);
 
   const [selectedJob, setSelectedJob] = useState<string | null>(null);
@@ -163,6 +164,42 @@ export default function App() {
 
         {/* Page Content Container */}
         <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
+          {/* Zero Balance Alert Banner for Embedded & Connected Wallets */}
+          {address && (Number(clientBalance) === 0 || clientBalance === "0.0000") && (
+            <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg p-3 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-amber-900 font-mono shadow-xs">
+              <div className="flex items-center gap-2 flex-wrap">
+                <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+                <span>
+                  Connected wallet has <strong>0 {NATIVE_SYMBOL}</strong>. Fund it to post jobs or pay escrow fees:
+                </span>
+                <span className="font-semibold text-gray-900 bg-amber-500/20 px-2 py-0.5 rounded border border-amber-500/30">
+                  {address.slice(0, 6)}...{address.slice(-4)}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(address);
+                    setCopiedAddress(true);
+                    setTimeout(() => setCopiedAddress(false), 1500);
+                  }}
+                  className="p-1 hover:text-black text-amber-600 transition cursor-pointer"
+                  title="Copy address"
+                >
+                  {copiedAddress ? <Check className="w-3.5 h-3.5 text-green-600" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <a
+                href="https://faucet.mstblockchain.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded shadow-xs transition shrink-0"
+              >
+                <span>Open MST Faucet</span>
+                <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            </div>
+          )}
+
           {/* TAB: MARKETPLACE */}
           {currentTab === "marketplace" && (
             <MarketplaceView

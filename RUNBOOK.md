@@ -288,3 +288,44 @@ Open `http://localhost:5173`.
 | **chainListener stops processing events / RPC query filter errors** | `lastProcessedBlock` initialized to 0 on MST Testnet (5.7M blocks), triggering RPC query range limits. | Backend logs: silent failure or `range exceeds limit`. | Fixed in `chainListener.ts`: initialization now starts at `currentBlock - 50` and automatically chunks block queries into max 1,000 block windows. |
 | **Simulator link needs verification without spending testnet coins** | Verifying WS & kinematics separate from on-chain transactions. | Need isolated simulator dispatch test. | Use the dev-only isolation endpoint: `Invoke-RestMethod -Uri "http://localhost:4000/api/dev/dispatch" -Method Post -ContentType "application/json" -Body '{"machineId":"M-042"}'`. Dispatches directly to simulator with zero escrow interaction. |
 
+---
+
+## 4. Privy Embedded Wallet Setup & Troubleshooting
+
+MachinaPay provides web2 onboarding via Privy, letting users sign in with Email (OTP) or Google and automatically provisioning an embedded wallet on the MST Testnet (`chainId 91562037`).
+
+### Setup Steps
+1. **Create App in Privy Dashboard**:
+   - Visit [dashboard.privy.io](https://dashboard.privy.io) and create an app (e.g. `MachinaPay`).
+   - Go to **Settings > Basics** and copy the **App ID** (25-character cuid starting with `c`).
+2. **Enable Authentication & Embedded Wallets**:
+   - In **Authentication > Login Methods**, enable **Email** and **Google**.
+   - In **Embedded Wallets**, turn ON **Create on login** for Ethereum wallets.
+3. **Configure Allowed Origins**:
+   - In **Settings > Domains**, add:
+     - `http://localhost:5173`
+     - Any local development IP (e.g. `http://192.168.x.x:5173` if testing on local network).
+4. **Configure Local Environment**:
+   - In `machinapay-frontend/.env`, set:
+     ```ini
+     VITE_PRIVY_APP_ID="your-25-char-privy-app-id"
+     # Optional:
+     VITE_PRIVY_CLIENT_ID="your-privy-client-id"
+     ```
+   - **Restart Vite**: Restart `npm run dev` in `machinapay-frontend` to reload env variables.
+5. **Fund the Embedded Wallet**:
+   - Copy the embedded wallet address from the frontend header.
+   - Go to the [MST Testnet Faucet](https://faucet.mstblockchain.com/) and request `tMSTC`.
+
+### Privy Troubleshooting Table
+
+| Symptom / Issue | Root Cause | Diagnosis | Fix |
+|---|---|---|---|
+| **Button disabled: "Privy not configured (set VITE_PRIVY_APP_ID)"** | `VITE_PRIVY_APP_ID` is missing, commented out, or contains placeholder/dummy value. | Check `ConnectWallet.tsx` badge tooltip. | Copy the real 25-character App ID from `dashboard.privy.io` into `machinapay-frontend/.env` and restart Vite (`npm run dev`). |
+| **"Privy failed to initialise, check browser console / allowed origins"** | Privy SDK failed to initialize within 8 seconds. Typically due to domain origin mismatch or invalid credentials. | Open DevTools console (`F12`); look for Privy 401 or origin errors. | Add `http://localhost:5173` to Allowed Origins in Privy Dashboard settings. Verify internet access to `auth.privy.io`. |
+| **"Invalid app ID" / console crash** | App ID does not match Privy's 25-character cuid specification (`/^c[a-z0-9]{24}$/i`). | Check character count and format of `VITE_PRIVY_APP_ID`. | Paste the exact 25-character ID provided in the Privy dashboard. Dummy/short IDs are safely trapped by `isValidPrivyAppId`. |
+| **Login popup blocked** | Browser blocked the OAuth or login popup window. | Browser address bar shows "Pop-up blocked" icon. | Click the icon in the address bar and select "Always allow pop-ups from http://localhost:5173". |
+| **Wrong chain / transactions fail** | Embedded wallet is on Mainnet/Sepolia instead of MST Testnet (`91562037`). | Check wallet network modal in Privy. | The frontend automatically triggers `wallet.switchChain(91562037)`. If prompted, approve the switch to MST Testnet. |
+| **Zero balance banner / "Insufficient balance" on job creation** | A freshly provisioned embedded wallet starts with 0 `tMSTC`. | Frontend displays yellow banner: `⚠️ Connected wallet has 0 tMSTC`. | Click "MST Testnet Faucet" in the banner or visit `https://faucet.mstblockchain.com/` to request testnet coins. |
+
+

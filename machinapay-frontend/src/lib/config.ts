@@ -15,6 +15,7 @@ export interface MachinaPayConfig {
   verifier: string;
   eip712: { name: string; version: string; chainId: number; verifyingContract: string };
   abi: { MachineRegistry: any[]; JobEscrow: any[] };
+  backendUrl?: string;
 }
 
 const networkMode = (import.meta as any).env?.VITE_NETWORK_MODE || "mst";
@@ -45,6 +46,7 @@ export const cfg: MachinaPayConfig = {
     verifyingContract: envEscrow || rawContracts.addresses?.JobEscrow || "0x0000000000000000000000000000000000000000",
   },
   abi: rawContracts.abi as any,
+  backendUrl: (import.meta as any).env?.VITE_MEMBER3_API_URL || "http://localhost:4000",
 };
 
 // Centralized native token symbol
