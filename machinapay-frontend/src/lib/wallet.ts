@@ -6,6 +6,7 @@ import {
   parseEther,
   formatEther,
   isAddress,
+  getAddress,
   Signer,
   TransactionResponse,
 } from "ethers";
@@ -288,13 +289,17 @@ export async function sendEth(
   amountEth: string,
   overrides: Record<string, any> = {}
 ): Promise<TransactionResponse> {
-  if (!to || !isAddress(to)) {
+  const cleanTo = (to || "").trim();
+  let normalizedTo: string;
+  try {
+    normalizedTo = getAddress(cleanTo.toLowerCase());
+  } catch {
     throw new WalletError("INVALID_ADDRESS", "Invalid recipient address format: must be 42-character hex");
   }
 
   try {
     const tx = await signer.sendTransaction({
-      to,
+      to: normalizedTo,
       value: parseEther(amountEth),
       ...overrides,
     });

@@ -106,7 +106,7 @@ export function TransactionLabView({
     },
     {
       id: "b-2",
-      recipient: "0x8b31a3194B270c3F16f1a8eF963ff0d55998A7c9",
+      recipient: "0x8b31a3194b270c3f16f1a8EF963FF0D55998A7C9",
       amount: "0.03",
       status: "idle",
     },
