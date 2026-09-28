@@ -40,19 +40,20 @@ export default function App() {
     try {
       const provider = getReadProvider();
       const escrow = getEscrow(provider);
-      const total = Number(await escrow.jobCount());
+      const total = Number(await escrow.jobCount().catch(() => 0));
       if (total === 0) {
         setJobs([]);
         return;
       }
       const offset = Math.max(0, total - 25);
-      const ids: string[] = await escrow.getJobIds(offset, total - offset);
+      const ids: string[] = await escrow.getJobIds(offset, total - offset).catch(() => []);
       const fetched = await Promise.all(
         ids
           .slice()
           .reverse()
           .map(async (jobId) => {
-            const j = await escrow.getJob(jobId);
+            const j = await escrow.getJob(jobId).catch(() => null);
+            if (!j) return null;
             return {
               jobId,
               state: Number(j.state),
@@ -62,12 +63,13 @@ export default function App() {
             };
           })
       );
-      setJobs(fetched);
-      if (!selectedJob && fetched.length > 0) {
+      setJobs(fetched.filter(Boolean) as any);
+      if (!selectedJob && fetched.length > 0 && fetched[0]) {
         setSelectedJob(fetched[0].jobId);
       }
     } catch (err: any) {
       console.warn("Could not load jobs in App:", err);
+      setJobs([]);
     }
   }
 

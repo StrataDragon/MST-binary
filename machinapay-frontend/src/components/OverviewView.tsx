@@ -62,8 +62,8 @@ export function OverviewView({
       const registry = getRegistry(provider);
       const escrow = getEscrow(provider);
 
-      // 1. Fetch registered machines
-      const rawIds = await registry.getMachineIds();
+      // 1. Fetch registered machines safely
+      const rawIds: string[] = await registry.getMachineIds().catch(() => []);
       const items: MachineOverviewItem[] = [];
 
       for (const idBytes of rawIds) {
@@ -74,7 +74,8 @@ export function OverviewView({
           idStr = idBytes.slice(0, 10);
         }
 
-        const m = await registry.getMachine(idBytes);
+        const m = await registry.getMachine(idBytes).catch(() => null);
+        if (!m) continue;
         const profile = getMachineProfile(idStr);
 
         let bal = "0.00";
@@ -130,7 +131,10 @@ export function OverviewView({
       setDailyVolume(volList);
     } catch (err: any) {
       console.warn("Error fetching overview data:", err);
-      setError(err?.message || "Failed to load on-chain overview data");
+      // Suppress un-deployed bytecode decode errors
+      if (!err?.message?.includes("could not decode result data") && !err?.message?.includes("BAD_DATA")) {
+        setError(err?.message || "Failed to load on-chain overview data");
+      }
     } finally {
       setLoadingMachines(false);
     }
