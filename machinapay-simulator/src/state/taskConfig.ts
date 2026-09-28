@@ -116,6 +116,42 @@ export const TASK_CONFIG: Record<TaskType, TaskConfig> = {
       DROPPING_OBJECT: "Unloading Package",
     },
   },
+  PACKAGE_TRANSPORT: {
+    taskType: "PACKAGE_TRANSPORT",
+    label: "Package Transport",
+    icon: "📦",
+    objectNoun: "cargo",
+    sourceZoneLabel: "WAREHOUSE A",
+    targetZoneLabel: "WAREHOUSE B",
+    weightKg: 10.0,
+    failureReason: "OBJECT_NOT_DELIVERED",
+    phaseLabels: {
+      ...BASE_PHASE_LABELS,
+      MOVING_TO_OBJECT: "Moving to Warehouse A",
+      PICKING_OBJECT: "Securing Cargo",
+      OBJECT_PICKED: "Cargo Secured",
+      MOVING_TO_TARGET: "Transporting to Warehouse B",
+      DROPPING_OBJECT: "Depositing Cargo",
+    },
+  },
+  COLOR_SORTING: {
+    taskType: "COLOR_SORTING",
+    label: "Color Sorting",
+    icon: "🎨",
+    objectNoun: "sorted item",
+    sourceZoneLabel: "CONVEYOR IN",
+    targetZoneLabel: "SORTED BIN",
+    weightKg: 2.5,
+    failureReason: "INCORRECT_SORTING",
+    phaseLabels: {
+      ...BASE_PHASE_LABELS,
+      MOVING_TO_OBJECT: "Scanning Item",
+      PICKING_OBJECT: "Gripping Item",
+      OBJECT_PICKED: "Classifying Color",
+      MOVING_TO_TARGET: "Routing to Bin",
+      DROPPING_OBJECT: "Releasing into Bin",
+    },
+  },
 };
 
 export function getTaskConfig(taskType: TaskType | null | undefined): TaskConfig {

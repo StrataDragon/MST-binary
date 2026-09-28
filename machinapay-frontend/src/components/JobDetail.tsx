@@ -10,6 +10,7 @@ import { JobTimeline } from "./JobTimeline";
 
 export function JobDetail({ jobId, signer }: { jobId: string; signer: any }) {
   const [job, setJob] = useState<any | null>(null);
+  const [queueInfo, setQueueInfo] = useState<any | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
 
@@ -18,6 +19,14 @@ export function JobDetail({ jobId, signer }: { jobId: string; signer: any }) {
     const escrow = getEscrow(provider);
     const j = await escrow.getJob(jobId);
     setJob(j);
+
+    try {
+      const bRes = await fetch(`${cfg.backendUrl || "http://localhost:4000"}/jobs/${jobId}`);
+      if (bRes.ok) {
+        const bJson = await bRes.json();
+        if (bJson.queueInfo) setQueueInfo(bJson.queueInfo);
+      }
+    } catch {}
   }
 
   useEffect(() => {
@@ -129,13 +138,25 @@ export function JobDetail({ jobId, signer }: { jobId: string; signer: any }) {
             <span className="text-[10px] uppercase text-secondary tracking-wider">Job Escrow Identifier</span>
             <h2 className="font-mono text-xs font-bold text-primary truncate max-w-md">{jobId}</h2>
           </div>
-          <span
-            className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
-              state === 6 ? "pill-confirmed" : state === 7 ? "pill-failed" : "pill-pending"
-            }`}
-          >
-            {status.text}
-          </span>
+          <div className="flex items-center gap-2">
+            {queueInfo && queueInfo.status === "QUEUED" && (
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                Queue Pos: #{queueInfo.queuePosition} of {queueInfo.totalQueue}
+              </span>
+            )}
+            {queueInfo && queueInfo.status === "RUNNING" && state < 6 && (
+              <span className="text-[9px] font-bold px-2 py-0.5 rounded-full uppercase bg-blue-500/20 text-blue-400 border border-blue-500/30 animate-pulse">
+                Active in Simulator
+              </span>
+            )}
+            <span
+              className={`text-[9px] font-bold px-2 py-0.5 rounded-full uppercase ${
+                state === 6 ? "pill-confirmed" : state === 7 ? "pill-failed" : "pill-pending"
+              }`}
+            >
+              {status.text}
+            </span>
+          </div>
         </div>
 
         <dl className="grid grid-cols-2 gap-y-2 text-xs">

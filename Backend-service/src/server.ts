@@ -16,9 +16,10 @@ import { getJob, listJobs, upsertJob } from "./store";
 import { startChainListener } from "./chainListener";
 import { storeMetadata, getMetadataByHash } from "./metadataStore";
 import { getEvidence, listAllEvidence } from "./evidenceStore";
-import { getSimulatorStatuses, handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
+import { getSimulatorStatuses, getJobQueueInfo, handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
 import { getTransactions, addSseClient, addWsClient, recordAndEmitTx, TransactionItem } from "./transactionStore";
 import { calculateJobPrice, JobType } from "./pricingEngine";
+import * as os from "os";
 
 const app = express();
 app.use(cors());
@@ -44,11 +45,16 @@ function decodeError(e: any): string {
 
 // ---------------------------------------------------------------- health
 app.get("/health", (_req, res) => {
+  const simStatuses = getSimulatorStatuses();
   res.json({
     ok: true,
+    chainId: cfg.chainId,
+    escrow: cfg.addresses.JobEscrow,
     machine: { address: getMachineAddress("M-042"), machineId: "M-042" },
     machine051: { address: getMachineAddress("M-051"), machineId: "M-051" },
     verifier: { address: getVerifierAddress() },
+    simulatorConnected: simStatuses.some((s) => s.connected),
+    simulators: simStatuses,
   });
 });
 
@@ -178,10 +184,16 @@ app.get("/jobs", (_req, res) => {
   res.json(listJobs());
 });
 
-app.get("/jobs/:jobId", (req, res) => {
+app.get(["/jobs/:jobId", "/api/jobs/:jobId"], (req, res) => {
   const job = getJob(req.params.jobId);
-  if (!job) return res.status(404).json({ error: "unknown job (not seen by this service yet)" });
-  res.json(job);
+  const queueInfo = getJobQueueInfo(req.params.jobId);
+  if (!job) {
+    if (queueInfo.status !== "NOT_FOUND") {
+      return res.json({ jobId: req.params.jobId, stage: "queued", queueInfo });
+    }
+    return res.status(404).json({ error: "unknown job (not seen by this service yet)" });
+  }
+  res.json({ ...job, queueInfo });
 });
 
 // ---------------------------------------------------------------- MACHINE AGENT routes
@@ -450,15 +462,33 @@ wss.on("connection", (ws, req) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`MachinaPay Backend service listening on :${PORT}`);
+server.listen(PORT, "0.0.0.0", () => {
+  console.log(`MachinaPay Backend service listening on 0.0.0.0:${PORT}`);
   console.log(`  machine wallet:  ${getMachineAddress()} (${MACHINE_ID_TEXT})`);
   console.log(`  verifier wallet: ${getVerifierAddress()}`);
   console.log(`  HTTP API:        http://localhost:${PORT}`);
-  console.log(`  Transactions:    http://localhost:${PORT}/api/transactions`);
+  console.log(`  Health Check:    http://localhost:${PORT}/health`);
   console.log(`  Jobs API:        http://localhost:${PORT}/api/jobs`);
   console.log(`  Simulator WS:    ws://localhost:${PORT}/ws`);
   console.log(`  Feed WS:         ws://localhost:${PORT}/api/transactions/ws`);
+
+  // Log local network IPs for cross-laptop configuration
+  const ifaces = os.networkInterfaces();
+  const lanIps: string[] = [];
+  for (const name of Object.keys(ifaces)) {
+    for (const iface of ifaces[name] || []) {
+      if (iface.family === "IPv4" && !iface.internal) {
+        lanIps.push(iface.address);
+      }
+    }
+  }
+  if (lanIps.length > 0) {
+    console.log(`\n  [Two-Laptop Demo Network Info]`);
+    console.log(`  Host LAN IPs:    ${lanIps.join(", ")}`);
+    console.log(`  Laptop 2 simulator .env should use:`);
+    console.log(`    VITE_SIMULATOR_WS_URL=ws://${lanIps[0]}:${PORT}/ws`);
+  }
+
   if (getVerifierAddress().toLowerCase() !== cfg.verifier.toLowerCase()) {
     const msg = `FATAL CONFIG MISMATCH: verifier address ${getVerifierAddress()} does not match JobEscrow verifier ${cfg.verifier}`;
     console.error(msg);

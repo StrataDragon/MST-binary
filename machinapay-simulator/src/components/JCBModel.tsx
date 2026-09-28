@@ -82,6 +82,12 @@ const ARM_PROFILES: Record<TaskType, ArmProfile> = {
   // A gentler release than MOVE_OBJECT, befitting a package being placed at
   // a delivery point rather than tipped out.
   DELIVERY: { ...DEFAULT_ARM_PROFILE, dropEndBucket: 0.15 },
+  PACKAGE_TRANSPORT: { ...DEFAULT_ARM_PROFILE, dropEndBucket: 0.15 },
+  COLOR_SORTING: {
+    ...DEFAULT_ARM_PROFILE,
+    dropMid: { boom: 0.4, dipper: 0.78, bucket: -0.55 },
+    dropEndBucket: 0.05,
+  },
   // Scoops low and hard into the pile (deep dipper curl), carries with the
   // bucket held less tucked-in (a fuller load), then swings the bucket
   // through a large forward tilt to actually dump the material.

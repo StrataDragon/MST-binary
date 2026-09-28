@@ -71,9 +71,10 @@ export async function processEventsInRange(fromBlock: number, toBlock: number) {
     upsertJob(jobId, { stage: "idle" });
 
     // Enqueue job for machine
+    const targetMachineId = meta.machineId || MACHINE_ID_TEXT;
     enqueueJob({
       jobId,
-      machineId: MACHINE_ID_TEXT,
+      machineId: targetMachineId,
       taskType: meta.taskType,
       reward: formatEther(reward),
       source: meta.source,

@@ -41,6 +41,8 @@ const SAMPLE_JOB_DATA: Record<TaskType, { source: Position; target: Position; re
   PICK_AND_PLACE: { source: { x: 150, y: 150 }, target: { x: 550, y: 450 }, reward: "120" },
   LOAD_AND_DUMP: { source: { x: 120, y: 400 }, target: { x: 620, y: 400 }, reward: "160" },
   DELIVERY: { source: { x: 80, y: 220 }, target: { x: 640, y: 220 }, reward: "140" },
+  PACKAGE_TRANSPORT: { source: { x: 100, y: 200 }, target: { x: 600, y: 400 }, reward: "150" },
+  COLOR_SORTING: { source: { x: 150, y: 250 }, target: { x: 500, y: 250 }, reward: "130" },
 };
 
 export function buildSampleJob(taskType: TaskType = "MOVE_OBJECT", simulateFailure = false): IncomingMessage {

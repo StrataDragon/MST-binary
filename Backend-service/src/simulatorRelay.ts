@@ -81,6 +81,37 @@ export function getSimulatorStatuses(): SimulatorMachineStatus[] {
     .sort((a, b) => a.machineId.localeCompare(b.machineId));
 }
 
+export function getJobQueueInfo(jobId: string): {
+  status: "RUNNING" | "QUEUED" | "NOT_FOUND";
+  queuePosition: number;
+  totalQueue: number;
+  machineId?: string;
+} {
+  const normId = jobId.toLowerCase();
+  for (const [mId, activeJob] of activeJobPerMachine.entries()) {
+    if (activeJob.jobId.toLowerCase() === normId) {
+      return {
+        status: "RUNNING",
+        queuePosition: 0,
+        totalQueue: (machineQueues.get(mId)?.length || 0) + 1,
+        machineId: mId,
+      };
+    }
+  }
+  for (const [mId, queue] of machineQueues.entries()) {
+    const idx = queue.findIndex((j) => j.jobId.toLowerCase() === normId);
+    if (idx !== -1) {
+      return {
+        status: "QUEUED",
+        queuePosition: idx + 1,
+        totalQueue: queue.length,
+        machineId: mId,
+      };
+    }
+  }
+  return { status: "NOT_FOUND", queuePosition: -1, totalQueue: 0 };
+}
+
 export function registerMachineSocket(machineId: string, ws: WebSocket) {
   machineSockets.set(machineId, ws);
   if (!machineStatus.has(machineId)) {

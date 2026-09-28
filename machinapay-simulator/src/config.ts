@@ -20,8 +20,8 @@ export const config = {
    */
   simulatorWsUrl: readEnv("VITE_SIMULATOR_WS_URL", "ws://localhost:4000/ws"),
 
-  /** If true, runs entirely offline with a built-in fake backend for testing. */
-  mockMode: readEnv("VITE_MOCK_MODE", "true") === "true",
+  /** If true, runs entirely offline with a built-in fake backend for testing. Defaults to false. */
+  mockMode: readEnv("VITE_MOCK_MODE", "false") === "true",
 
   /** Delay before auto-returning to IDLE after a completed/failed job. */
   autoResetDelayMs: Number(readEnv("VITE_AUTO_RESET_DELAY_MS", "6000")),

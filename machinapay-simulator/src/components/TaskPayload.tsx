@@ -23,7 +23,10 @@ export function TaskPayload({ taskType }: { taskType: TaskType }) {
     case "LOAD_AND_DUMP":
       return <PilePayload />;
     case "DELIVERY":
+    case "PACKAGE_TRANSPORT":
       return <PackagePayload />;
+    case "COLOR_SORTING":
+      return <SteelBarrelPayload />;
     case "MOVE_OBJECT":
     default:
       return <WoodenCratePayload />;
@@ -37,6 +40,8 @@ export const PAYLOAD_REST_Y: Record<TaskType, number> = {
   PICK_AND_PLACE: 0.22,
   LOAD_AND_DUMP: 0.15,
   DELIVERY: 0.21,
+  PACKAGE_TRANSPORT: 0.21,
+  COLOR_SORTING: 0.22,
 };
 
 const OUTLINE = "#FFF4D6";

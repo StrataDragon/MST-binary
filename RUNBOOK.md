@@ -159,3 +159,74 @@ To target the MST Testnet (Chain ID `91562037`):
    npm run seed:mst
    ```
 3. Run Backend-service with the testnet `.env`.
+
+---
+
+## Two-Laptop Demo Setup
+
+In a production demonstration, the system runs across two physical laptops on the same Wi-Fi / Local Area Network (LAN):
+- **Laptop 1 (Host):** Runs EVM node (or MST Testnet), Backend-Service (:4000), and Customer Frontend (:5173).
+- **Laptop 2 (Robot Kiosk):** Runs 3D Robot Simulator (:5174).
+
+### 1. Environment Configurations
+
+#### Laptop 1 (`Backend-service/.env` & `machinapay-frontend/.env`):
+Find Laptop 1's LAN IP using `ipconfig` (e.g. `192.168.1.50`).
+
+In `Backend-service/.env`:
+```ini
+PORT=4000
+HOST=0.0.0.0
+# The server automatically binds to 0.0.0.0 and logs LAN IPs at startup
+```
+
+In `machinapay-frontend/.env`:
+```ini
+VITE_RPC_URL=http://127.0.0.1:8545
+# Or for MST Testnet:
+# VITE_RPC_URL=https://testnetrpc.mstblockchain.com
+# VITE_CHAIN_ID=91562037
+VITE_BACKEND_URL=http://localhost:4000
+```
+
+#### Laptop 2 (`machinapay-simulator/.env`):
+Replace `192.168.1.50` with Laptop 1's actual LAN IP:
+```ini
+VITE_MACHINE_ID=M-042
+VITE_SIMULATOR_WS_URL=ws://192.168.1.50:4000/ws
+VITE_MOCK_MODE=false
+VITE_AUTO_RESET_DELAY_MS=6000
+VITE_HEARTBEAT_INTERVAL_MS=5000
+```
+
+---
+
+### 2. Startup Order
+1. **[Laptop 1] Blockchain Node:** `npx hardhat node` (or ensure MST Testnet RPC is accessible).
+2. **[Laptop 1] Deploy & Seed:** `npm run deploy:local && npm run seed:local`.
+3. **[Laptop 1] Start Backend:** `cd Backend-service && npm run dev`.
+   - Check startup logs for:
+     ```
+     MachinaPay Backend service listening on 0.0.0.0:4000
+       [Two-Laptop Demo Network Info]
+       Host LAN IPs: 192.168.1.50
+     ```
+   - Verify health from Laptop 2's browser: `http://192.168.1.50:4000/health`.
+4. **[Laptop 2] Start Simulator:** `cd machinapay-simulator && npm run dev`.
+   - Open simulator in browser. Status bar should show green dot: `CONNECTED`.
+5. **[Laptop 1] Start Customer Frontend:** `cd machinapay-frontend && npm run dev`.
+   - Connect BridgeKey wallet on MST Testnet (Chain ID `91562037`) or Localhost (`31337`).
+   - Create and approve job. Robot on Laptop 2 runs automatically with zero manual clicks!
+
+---
+
+### 3. Troubleshooting Matrix
+
+| Issue | Root Cause | Solution |
+|---|---|---|
+| **Job created in wallet, but Simulator stays IDLE** | 1. Simulator in Mock Mode.<br>2. `VITE_SIMULATOR_WS_URL` is pointing to `localhost` on Laptop 2.<br>3. Windows Firewall blocking port 4000 on Laptop 1. | 1. In `machinapay-simulator/.env`, ensure `VITE_MOCK_MODE=false`.<br>2. Set `VITE_SIMULATOR_WS_URL=ws://<LAPTOP_1_IP>:4000/ws`.<br>3. Allow inbound TCP port 4000 through Windows Defender Firewall on Laptop 1.<br>4. Check `http://<LAPTOP_1_IP>:4000/health` from Laptop 2. |
+| **Metadata Rejected error (`metadataHash mismatch`)** | Frontend failed to reach `/api/jobs` before submitting on-chain transaction. | Ensure Backend-Service is running on port 4000. The frontend now strictly validates metadata registration before allowing wallet signature so jobs are never silently rejected. |
+| **Wrong Chain in BridgeKey / Transactions Revert** | BridgeKey is connected to Ethereum Mainnet or Sepolia instead of MST Testnet (`91562037`) or Hardhat (`31337`). | In BridgeKey, approve the network switch prompt or select MST Testnet (RPC: `https://testnetrpc.mstblockchain.com`, Chain ID: `91562037`, Symbol: `MSTC`). |
+| **WS Not Connecting (Red dot on Simulator)** | Backend not listening on all interfaces (`0.0.0.0`) or IP changed. | Backend now binds to `0.0.0.0`. Check Laptop 1's IP using `ipconfig` and ensure Laptop 2 can ping Laptop 1's LAN IP (`ping <LAPTOP_1_IP>`). Verify `VITE_SIMULATOR_WS_URL`. |
+| **Machine ID mismatch** | Job was created for M-051 but simulator is running as M-042. | Check `VITE_MACHINE_ID` in simulator `.env`. Each simulator instance registers its own ID (`M-042` or `M-051`). |
+

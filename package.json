@@ -21,7 +21,8 @@
     "validate:local": "hardhat run scripts/validate-deployment.ts --network localhost",
     "check:secrets": "ts-node scripts/check-secrets.ts",
     "e2e": "hardhat run scripts/e2e.ts --network localhost",
-    "e2e:dual": "hardhat run scripts/e2e-dual-machines.ts --network localhost"
+    "e2e:dual": "hardhat run scripts/e2e-dual-machines.ts --network localhost",
+    "e2e:bridgekey": "hardhat run scripts/bridgekey-flow-check.ts --network localhost"
   },
 
   "devDependencies": {

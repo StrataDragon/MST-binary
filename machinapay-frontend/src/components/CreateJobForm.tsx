@@ -20,7 +20,7 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
       const jobId = keccak256(toUtf8Bytes(crypto.randomUUID()));
 
       // Call backend to canonicalize & store off-chain metadata, returning keccak256 hash
-      let metadataHash = keccak256(toUtf8Bytes(description));
+      let metadataHash: string;
       try {
         const backendUrl = MEMBER3_API_URL;
         const metaRes = await fetch(`${backendUrl}/api/jobs`, {
@@ -33,14 +33,16 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
             description,
           }),
         });
-        if (metaRes.ok) {
-          const metaJson = await metaRes.json();
-          if (metaJson.metadataHash) {
-            metadataHash = metaJson.metadataHash;
-          }
+        if (!metaRes.ok) {
+          throw new Error(`Backend metadata registration failed with HTTP ${metaRes.status}`);
         }
-      } catch (e) {
-        console.warn("Could not reach backend metadata service, using fallback hash", e);
+        const metaJson = await metaRes.json();
+        if (!metaJson.metadataHash) {
+          throw new Error("Backend did not return a valid metadataHash");
+        }
+        metadataHash = metaJson.metadataHash;
+      } catch (e: any) {
+        throw new Error(`Cannot create job: Backend metadata service unreachable (${e.message}). Ensure Backend-service is running on port 4000.`);
       }
 
       const durationSeconds = Math.max(1, Math.round(Number(minutes) * 60));

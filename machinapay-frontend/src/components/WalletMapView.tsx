@@ -664,7 +664,7 @@ export function WalletMapView({
       const jobId = keccak256(toUtf8Bytes(`job-${Date.now()}`));
       const durationSeconds = Math.max(60, Number(formDurationMinutes) * 60);
 
-      let metadataHash = keccak256(toUtf8Bytes(formDescription));
+      let metadataHash: string;
       try {
         const metaRes = await fetch(`${MEMBER3_API_URL}/api/jobs`, {
           method: "POST",
@@ -674,12 +674,16 @@ export function WalletMapView({
             description: formDescription,
           }),
         });
-        if (metaRes.ok) {
-          const mJson = await metaRes.json();
-          if (mJson.metadataHash) metadataHash = mJson.metadataHash;
+        if (!metaRes.ok) {
+          throw new Error(`Backend metadata registration failed with HTTP ${metaRes.status}`);
         }
-      } catch {
-        // Fallback
+        const mJson = await metaRes.json();
+        if (!mJson.metadataHash) {
+          throw new Error("Backend did not return a valid metadataHash");
+        }
+        metadataHash = mJson.metadataHash;
+      } catch (e: any) {
+        throw new Error(`Cannot broadcast job: Backend metadata service unreachable (${e.message}). Ensure Backend-service is active.`);
       }
 
       setFormTxStatus("Broadcasting transaction to blockchain...");
