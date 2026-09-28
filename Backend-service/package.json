@@ -10,6 +10,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "ts-node test/proofVerification.test.ts",
+    "doctor": "ts-node src/doctor.ts",
     "demo": "ts-node scripts/demo-client.ts"
   },
   "dependencies": {

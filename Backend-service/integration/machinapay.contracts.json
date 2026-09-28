@@ -1,19 +1,19 @@
 {
-  "network": "localhost",
-  "chainId": 31337,
-  "rpcUrl": "http://127.0.0.1:8545",
-  "explorerUrl": null,
-  "nativeToken": "MSTC",
+  "network": "mst",
+  "chainId": 91562037,
+  "rpcUrl": "https://testnetrpc.mstblockchain.com",
+  "explorerUrl": "https://testnet.mstscan.com",
+  "nativeToken": "tMSTC",
   "addresses": {
-    "MachineRegistry": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
-    "JobEscrow": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+    "MachineRegistry": "0x59C6f1181aCd6f133545E1D5b8582380ACC4196E",
+    "JobEscrow": "0x07134fd3d167f5E331A273722A54A88536331C2e"
   },
   "verifier": "0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225",
   "eip712": {
     "name": "MachinaPay JobEscrow",
     "version": "1",
-    "chainId": 31337,
-    "verifyingContract": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+    "chainId": 91562037,
+    "verifyingContract": "0x07134fd3d167f5E331A273722A54A88536331C2e"
   },
   "abi": {
     "MachineRegistry": [

@@ -17,11 +17,27 @@ let lastProcessedBlock = 0;
 let isPolling = false;
 
 export async function processEventsInRange(fromBlock: number, toBlock: number) {
+  if (fromBlock > toBlock) return;
   const escrow = getEscrow();
 
+  // If the range is too large, split into chunks of 1000 blocks to prevent RPC limit errors
+  const MAX_CHUNK = 1000;
+  if (toBlock - fromBlock > MAX_CHUNK) {
+    for (let chunkStart = fromBlock; chunkStart <= toBlock; chunkStart += MAX_CHUNK) {
+      const chunkEnd = Math.min(chunkStart + MAX_CHUNK - 1, toBlock);
+      await processEventsInRange(chunkStart, chunkEnd);
+    }
+    return;
+  }
+
   // 1. JobCreated
-  const createdFilter = escrow.filters.JobCreated();
-  const createdEvents = await escrow.queryFilter(createdFilter, fromBlock, toBlock);
+  let createdEvents: any[] = [];
+  try {
+    const createdFilter = escrow.filters.JobCreated();
+    createdEvents = await escrow.queryFilter(createdFilter, fromBlock, toBlock);
+  } catch (err: any) {
+    console.error(`[chain-listener] Error querying JobCreated events (${fromBlock}-${toBlock}):`, err?.message || err);
+  }
   for (const ev of createdEvents) {
     const args = (ev as any).args;
     if (!args) continue;
@@ -272,8 +288,8 @@ export async function reconcilePastJobs() {
     const currentBlock = await provider.getBlockNumber();
     console.log(`[reconciliation] Current block number: ${currentBlock}`);
 
-    // Scan from block 0 (or recent) to current block
-    const fromBlock = 0;
+    // Scan recent blocks (last 50 blocks) rather than block 0
+    const fromBlock = Math.max(0, currentBlock - 50);
     const toBlock = currentBlock;
 
     await processEventsInRange(fromBlock, toBlock);
@@ -355,18 +371,23 @@ export function startChainListener() {
       isPolling = true;
       try {
         const currentBlock = await provider.getBlockNumber();
+        if (lastProcessedBlock === 0) {
+          lastProcessedBlock = Math.max(0, currentBlock - 10);
+        }
         if (currentBlock > lastProcessedBlock) {
           const from = lastProcessedBlock + 1;
           const to = currentBlock;
           await processEventsInRange(from, to);
           lastProcessedBlock = currentBlock;
         }
-      } catch (err) {
-        // RPC glitch, will retry next tick
+      } catch (err: any) {
+        console.error("[chain-listener] Polling cycle error:", err?.message || err);
       } finally {
         isPolling = false;
       }
     }, 1500);
     console.log("[chain-listener] Event poller active.");
+  }).catch((err) => {
+    console.error("[chain-listener] Startup reconciliation failed:", err);
   });
 }

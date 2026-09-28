@@ -19,7 +19,7 @@ import {
   Pause,
   Trash2,
 } from "lucide-react";
-import { cfg, NATIVE_SYMBOL, MEMBER3_API_URL, SIMULATOR_URL } from "../lib/config";
+import { cfg, NATIVE_SYMBOL, MEMBER3_API_URL, SIMULATOR_URL, DEFAULT_JOB_CONFIG } from "../lib/config";
 import { getReadProvider, getEscrow, getRegistry, decodeContractError } from "../lib/wallet";
 import {
   MapNode,
@@ -112,11 +112,12 @@ export function WalletMapView({
 
   // Create Job Form inside Right Panel
   const [formDescription, setFormDescription] = useState("Autonomous transport package delivery");
-  const [formReward, setFormReward] = useState("10");
+  const [formReward, setFormReward] = useState(DEFAULT_JOB_CONFIG.reward);
   const [formDurationMinutes, setFormDurationMinutes] = useState("60");
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formTxStatus, setFormTxStatus] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const [suggestedReward, setSuggestedReward] = useState<string | null>(null);
 
   function copyText(key: string, val: string) {
     navigator.clipboard.writeText(val);
@@ -333,7 +334,23 @@ export function WalletMapView({
     async function refreshSimulatorStatus() {
       try {
         const response = await fetch(`${MEMBER3_API_URL}/api/simulator/status`);
-        if (!response.ok) return;
+        if (!response.ok) {
+          if (disposed) return;
+          setNodes((previous) =>
+            previous.map((node) => {
+              if (node.kind !== "machine") return node;
+              return {
+                ...node,
+                subLabel: "Backend unreachable",
+                details: {
+                  ...node.details,
+                  "3D Simulator": "Backend unreachable",
+                },
+              };
+            })
+          );
+          return;
+        }
         const payload = (await response.json()) as { machines?: SimulatorMachineStatus[] };
         const statuses = payload.machines || [];
         if (disposed) return;
@@ -357,7 +374,20 @@ export function WalletMapView({
           })
         );
       } catch {
-        // Non-blocking fallback
+        if (disposed) return;
+        setNodes((previous) =>
+          previous.map((node) => {
+            if (node.kind !== "machine") return node;
+            return {
+              ...node,
+              subLabel: "Backend unreachable",
+              details: {
+                ...node.details,
+                "3D Simulator": "Backend unreachable",
+              },
+            };
+          })
+        );
       }
     }
 
@@ -650,6 +680,7 @@ export function WalletMapView({
     }
     setFormSubmitting(true);
     setFormError(null);
+    setSuggestedReward(null);
     setFormTxStatus("Waiting for signature...");
 
     setEdges((prev) =>
@@ -684,6 +715,32 @@ export function WalletMapView({
         metadataHash = mJson.metadataHash;
       } catch (e: any) {
         throw new Error(`Cannot broadcast job: Backend metadata service unreachable (${e.message}). Ensure Backend-service is active.`);
+      }
+
+      // Pre-flight balance & gas check before triggering wallet prompt
+      const userAddr = await signer.getAddress();
+      const userBalance: bigint = await signer.provider.getBalance(userAddr);
+      const feeData = await signer.provider.getFeeData();
+      const gasPrice = feeData.maxFeePerGas || feeData.gasPrice || 1000000000n;
+      let estGas = 200000n;
+      try {
+        estGas = await escrow.createJob.estimateGas(jobId, metadataHash, durationSeconds, formDescription, {
+          value: parseEther(formReward || "0"),
+        });
+      } catch {
+        estGas = 250000n;
+      }
+      const estGasCost = (estGas * gasPrice * 12n) / 10n; // 20% safety margin
+      const rewardWei = parseEther(formReward || "0");
+      const totalNeeded = rewardWei + estGasCost;
+
+      if (userBalance < totalNeeded) {
+        const maxSafeWei = userBalance > estGasCost ? userBalance - estGasCost : 0n;
+        const maxSafe = formatEther(maxSafeWei);
+        setSuggestedReward(maxSafe);
+        throw new Error(
+          `Need ${formatEther(totalNeeded)} ${NATIVE_SYMBOL} (reward ${formReward} + gas ~${formatEther(estGasCost)}), but wallet has ${formatEther(userBalance)} ${NATIVE_SYMBOL}. Max safe reward is ${Number(maxSafe).toFixed(4)} ${NATIVE_SYMBOL}.`
+        );
       }
 
       setFormTxStatus("Broadcasting transaction to blockchain...");
@@ -1384,8 +1441,21 @@ export function WalletMapView({
               )}
 
               {formError && (
-                <div className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px]">
-                  {formError}
+                <div className="p-2 rounded bg-red-50 border border-red-200 text-red-700 text-[11px] space-y-1.5">
+                  <div>{formError}</div>
+                  {suggestedReward && Number(suggestedReward) > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormReward(Number(suggestedReward).toFixed(4));
+                        setFormError(null);
+                        setSuggestedReward(null);
+                      }}
+                      className="inline-block text-left text-[11px] font-bold text-blue-700 hover:text-blue-900 underline cursor-pointer"
+                    >
+                      ⚡ Use max safe reward ({Number(suggestedReward).toFixed(4)} {NATIVE_SYMBOL})
+                    </button>
+                  )}
                 </div>
               )}
 

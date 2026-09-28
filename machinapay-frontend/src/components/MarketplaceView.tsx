@@ -16,7 +16,7 @@ import {
   Copy,
   Check,
 } from "lucide-react";
-import { cfg, NATIVE_SYMBOL, MEMBER3_API_URL } from "../lib/config";
+import { cfg, NATIVE_SYMBOL, MEMBER3_API_URL, DEFAULT_JOB_CONFIG } from "../lib/config";
 import { getReadProvider, getRegistry, getEscrow, decodeContractError } from "../lib/wallet";
 import { getMachineProfile, MachineProfile } from "../lib/machineProfiles";
 import { quoteTransport, quoteSorting, QuoteResult } from "../lib/pricing";
@@ -60,6 +60,8 @@ export function MarketplaceView({
   const [hiringMachine, setHiringMachine] = useState<OnChainMachineData | null>(null);
   const [hireDescription, setHireDescription] = useState<string>("");
   const [hireDurationMinutes, setHireDurationMinutes] = useState<string>("60");
+  const [hireReward, setHireReward] = useState<string>(DEFAULT_JOB_CONFIG.reward || "1.0");
+  const [suggestedReward, setSuggestedReward] = useState<string | null>(null);
 
   // Dynamic pricing inputs for the hire form
   // Transport inputs
@@ -233,6 +235,8 @@ export function MarketplaceView({
     setHiringMachine(machine);
     setHireError(null);
     setHireTxStatus(null);
+    setHireReward(DEFAULT_JOB_CONFIG.reward || "1.0");
+    setSuggestedReward(null);
     setHireDescription(
       machine.profile.jobType === "COLOR_SORTING"
         ? "Sort 100 objects into 4 color bins"
@@ -278,6 +282,34 @@ export function MarketplaceView({
       const jobId = keccak256(toUtf8Bytes(`job-${Date.now()}-${hiringMachine.idStr}`));
       const durationSeconds = Math.max(60, Number(hireDurationMinutes) * 60);
 
+      const rewardToLock = hireReward || quote.total.toString();
+      const rewardWei = parseEther(rewardToLock || "0");
+
+      // Pre-flight balance & gas check before triggering wallet prompt
+      const userAddr = await signer.getAddress();
+      const userBalance: bigint = await signer.provider.getBalance(userAddr);
+      const feeData = await signer.provider.getFeeData();
+      const gasPrice = feeData.maxFeePerGas || feeData.gasPrice || 1000000000n;
+      let estGas = 200000n;
+      try {
+        estGas = await escrow.createJob.estimateGas(jobId, keccak256(toUtf8Bytes("pending")), durationSeconds, hireDescription, {
+          value: rewardWei,
+        });
+      } catch {
+        estGas = 250000n;
+      }
+      const estGasCost = (estGas * gasPrice * 12n) / 10n; // 20% safety margin
+      const totalNeeded = rewardWei + estGasCost;
+
+      if (userBalance < totalNeeded) {
+        const maxSafeWei = userBalance > estGasCost ? userBalance - estGasCost : 0n;
+        const maxSafe = formatEther(maxSafeWei);
+        setSuggestedReward(maxSafe);
+        throw new Error(
+          `Need ${formatEther(totalNeeded)} ${NATIVE_SYMBOL} (reward ${rewardToLock} + gas ~${formatEther(estGasCost)}), but wallet has ${formatEther(userBalance)} ${NATIVE_SYMBOL}. Max safe reward is ${Number(maxSafe).toFixed(4)} ${NATIVE_SYMBOL}.`
+        );
+      }
+
       // Register off-chain metadata
       let metadataHash: string;
       try {
@@ -303,9 +335,9 @@ export function MarketplaceView({
         throw new Error(`Cannot hire machine: Backend metadata service unreachable (${e.message}). Please ensure Backend-service is running.`);
       }
 
-      setHireTxStatus(`Funding escrow with ${quote.total} ${NATIVE_SYMBOL}…`);
+      setHireTxStatus(`Funding escrow with ${rewardToLock} ${NATIVE_SYMBOL}…`);
       const tx = await escrow.createJob(jobId, metadataHash, durationSeconds, hireDescription, {
-        value: parseEther(quote.total.toString()),
+        value: rewardWei,
       });
 
       setHireTxStatus(`Mining transaction (${tx.hash.slice(0, 10)}…)`);
@@ -696,6 +728,40 @@ export function MarketplaceView({
                 />
               </div>
 
+              {/* Escrow Reward Input */}
+              {(() => {
+                const quote = getModalQuote();
+                return (
+                  <div>
+                    <div className="flex justify-between items-center">
+                      <label className="text-gray-600 text-[10px] uppercase font-bold">
+                        Escrow Reward ({NATIVE_SYMBOL})
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHireReward(quote.total.toString());
+                          setHireError(null);
+                        }}
+                        className="text-[10px] text-blue-600 hover:underline"
+                      >
+                        Match quote ({quote.total})
+                      </button>
+                    </div>
+                    <input
+                      type="text"
+                      value={hireReward}
+                      onChange={(e) => {
+                        setHireReward(e.target.value);
+                        setHireError(null);
+                      }}
+                      disabled={hireSubmitting}
+                      className="w-full mt-1 px-3 py-2 rounded border border-gray-200 bg-gray-50 text-gray-900 font-mono outline-none focus:border-blue-500"
+                    />
+                  </div>
+                );
+              })()}
+
               {/* Dynamic Quote Breakdown */}
               {(() => {
                 const quote = getModalQuote();
@@ -732,6 +798,20 @@ export function MarketplaceView({
                 </div>
               )}
 
+              {suggestedReward && Number(suggestedReward) > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHireReward(Number(suggestedReward).toFixed(4));
+                    setHireError(null);
+                    setSuggestedReward(null);
+                  }}
+                  className="w-full text-xs py-1.5 px-3 rounded bg-amber-500/20 text-amber-800 border border-amber-500/40 hover:bg-amber-500/30 font-mono transition-colors font-semibold"
+                >
+                  ⚡ Use max safe reward ({Number(suggestedReward).toFixed(4)} {NATIVE_SYMBOL})
+                </button>
+              )}
+
               <button
                 type="submit"
                 disabled={hireSubmitting || !signer}
@@ -741,7 +821,7 @@ export function MarketplaceView({
                 <span>
                   {hireSubmitting
                     ? "Locking Funds in Escrow…"
-                    : `Lock ${getModalQuote().total} ${NATIVE_SYMBOL} & Hire Machine`}
+                    : `Lock ${hireReward || getModalQuote().total} ${NATIVE_SYMBOL} & Hire Machine`}
                 </span>
               </button>
             </form>

@@ -1,7 +1,7 @@
 import { useState } from "react";
-import { keccak256, parseEther, toUtf8Bytes } from "ethers";
+import { keccak256, parseEther, formatEther, toUtf8Bytes } from "ethers";
 import { getEscrow, decodeContractError } from "../lib/wallet";
-import { DEFAULT_JOB_CONFIG, MEMBER3_API_URL } from "../lib/config";
+import { DEFAULT_JOB_CONFIG, MEMBER3_API_URL, NATIVE_SYMBOL } from "../lib/config";
 
 export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (jobId: string) => void }) {
   const [description, setDescription] = useState(DEFAULT_JOB_CONFIG.description);
@@ -9,12 +9,14 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
   const [minutes, setMinutes] = useState(DEFAULT_JOB_CONFIG.minutes);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suggestedReward, setSuggestedReward] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!signer) return setError("Connect your wallet first.");
     setBusy(true);
     setError(null);
+    setSuggestedReward(null);
     const escrow = getEscrow(signer);
     try {
       const jobId = keccak256(toUtf8Bytes(crypto.randomUUID()));
@@ -46,6 +48,33 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
       }
 
       const durationSeconds = Math.max(1, Math.round(Number(minutes) * 60));
+
+      // Pre-flight balance & gas check before triggering wallet prompt
+      const userAddr = await signer.getAddress();
+      const userBalance: bigint = await signer.provider.getBalance(userAddr);
+      const feeData = await signer.provider.getFeeData();
+      const gasPrice = feeData.maxFeePerGas || feeData.gasPrice || 1000000000n;
+      let estGas = 200000n;
+      try {
+        estGas = await escrow.createJob.estimateGas(jobId, metadataHash, durationSeconds, description, {
+          value: parseEther(reward || "0"),
+        });
+      } catch {
+        estGas = 250000n;
+      }
+      const estGasCost = (estGas * gasPrice * 12n) / 10n; // 20% safety margin
+      const rewardWei = parseEther(reward || "0");
+      const totalNeeded = rewardWei + estGasCost;
+
+      if (userBalance < totalNeeded) {
+        const maxSafeWei = userBalance > estGasCost ? userBalance - estGasCost : 0n;
+        const maxSafe = formatEther(maxSafeWei);
+        setSuggestedReward(maxSafe);
+        throw new Error(
+          `Need ${formatEther(totalNeeded)} ${NATIVE_SYMBOL} (reward ${reward} + gas ~${formatEther(estGasCost)}), but wallet has ${formatEther(userBalance)} ${NATIVE_SYMBOL}. Max safe reward is ${Number(maxSafe).toFixed(4)} ${NATIVE_SYMBOL}.`
+        );
+      }
+
       const tx = await escrow.createJob(jobId, metadataHash, durationSeconds, description, {
         value: parseEther(reward || "0"),
       });
@@ -89,6 +118,19 @@ export function CreateJobForm({ signer, onCreated }: { signer: any; onCreated: (
         </label>
       </div>
       {error && <p className="text-sm text-bad">{error}</p>}
+      {suggestedReward && Number(suggestedReward) > 0 && (
+        <button
+          type="button"
+          onClick={() => {
+            setReward(Number(suggestedReward).toFixed(4));
+            setError(null);
+            setSuggestedReward(null);
+          }}
+          className="w-full text-xs py-1.5 px-3 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 hover:bg-amber-500/30 font-mono transition-colors"
+        >
+          ⚡ Use max safe reward ({Number(suggestedReward).toFixed(4)} {NATIVE_SYMBOL})
+        </button>
+      )}
       <button
         type="submit"
         disabled={busy || !signer}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { formatEther, encodeBytes32String, decodeBytes32String } from "ethers";
 import { getReadProvider, getRegistry } from "../lib/wallet";
-import { cfg, DEFAULT_MACHINE_IDS } from "../lib/config";
+import { cfg, DEFAULT_MACHINE_IDS, MEMBER3_API_URL } from "../lib/config";
 
 interface MachineInfo {
   id: string;
@@ -18,6 +18,8 @@ interface MachineInfo {
 export function MachinePanel() {
   const [machines, setMachines] = useState<MachineInfo[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [simStatuses, setSimStatuses] = useState<{ [machineId: string]: { connected: boolean; robotState: string } }>({});
+  const [backendStatus, setBackendStatus] = useState<"ok" | "unreachable">("ok");
 
   async function load() {
     try {
@@ -86,7 +88,35 @@ export function MachinePanel() {
     const registry = getRegistry(provider);
     registry.on("MachineRegistered", load);
     registry.on("MachineReputationUpdated", load);
+
+    let disposed = false;
+    const pollSim = async () => {
+      try {
+        const res = await fetch(`${MEMBER3_API_URL}/api/simulator/status`);
+        if (!res.ok) {
+          if (!disposed) setBackendStatus("unreachable");
+          return;
+        }
+        const data = await res.json();
+        if (!disposed) {
+          setBackendStatus("ok");
+          const map: { [id: string]: { connected: boolean; robotState: string } } = {};
+          for (const m of data.machines || []) {
+            map[m.machineId] = { connected: m.connected, robotState: m.robotState };
+          }
+          setSimStatuses(map);
+        }
+      } catch {
+        if (!disposed) setBackendStatus("unreachable");
+      }
+    };
+
+    pollSim();
+    const timer = setInterval(pollSim, 3000);
+
     return () => {
+      disposed = true;
+      clearInterval(timer);
       registry.off("MachineRegistered", load);
       registry.off("MachineReputationUpdated", load);
     };
@@ -94,32 +124,57 @@ export function MachinePanel() {
 
   return (
     <div className="rounded-lg border border-line bg-panel p-4">
-      <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-dim">Registered machines</h2>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-dim">Registered machines</h2>
+        <span
+          className={`text-[10px] font-mono px-2 py-0.5 rounded border ${
+            backendStatus === "ok"
+              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+          }`}
+        >
+          Backend: {backendStatus === "ok" ? "ONLINE" : "UNREACHABLE"}
+        </span>
+      </div>
       {error && <p className="text-sm text-bad">{error}</p>}
       {!error && machines.length === 0 && (
         <p className="text-sm text-dim">No registered machine found yet — run Member 1's seed script.</p>
       )}
       <div className="space-y-3">
-        {machines.map((m) => (
-          <div key={m.id} className="rounded-md border border-line/60 p-3">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-base">{m.id}</span>
-              <span className={`text-xs font-semibold ${m.active ? "text-ok" : "text-bad"}`}>
-                {m.active ? "ACTIVE" : "INACTIVE"}
-              </span>
+        {machines.map((m) => {
+          const sim = simStatuses[m.id];
+          return (
+            <div key={m.id} className="rounded-md border border-line/60 p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-base font-semibold">{m.id}</span>
+                  <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded ${m.active ? "bg-emerald-500/10 text-emerald-400" : "bg-red-500/10 text-red-400"}`}>
+                    {m.active ? "ACTIVE" : "INACTIVE"}
+                  </span>
+                </div>
+                <div className="text-xs font-mono">
+                  {backendStatus === "unreachable" ? (
+                    <span className="text-amber-400">backend unreachable</span>
+                  ) : sim?.connected ? (
+                    <span className="text-emerald-400 font-semibold">3D simulator: {sim.robotState}</span>
+                  ) : (
+                    <span className="text-gray-400">3D simulator offline</span>
+                  )}
+                </div>
+              </div>
+              <dl className="mt-2 grid grid-cols-2 gap-y-1 text-sm">
+                <dt className="text-dim">Wallet balance</dt>
+                <dd className="text-right font-mono">{Number(m.balance).toFixed(3)} {cfg.nativeToken}</dd>
+                <dt className="text-dim">Stake</dt>
+                <dd className="text-right font-mono">{m.stake} {cfg.nativeToken}</dd>
+                <dt className="text-dim">Reputation</dt>
+                <dd className="text-right font-mono">{m.reputation}</dd>
+                <dt className="text-dim">Jobs completed / failed</dt>
+                <dd className="text-right font-mono">{m.jobsCompleted} / {m.jobsFailed}</dd>
+              </dl>
             </div>
-            <dl className="mt-2 grid grid-cols-2 gap-y-1 text-sm">
-              <dt className="text-dim">Wallet balance</dt>
-              <dd className="text-right font-mono">{Number(m.balance).toFixed(3)} {cfg.nativeToken}</dd>
-              <dt className="text-dim">Stake</dt>
-              <dd className="text-right font-mono">{m.stake} {cfg.nativeToken}</dd>
-              <dt className="text-dim">Reputation</dt>
-              <dd className="text-right font-mono">{m.reputation}</dd>
-              <dt className="text-dim">Jobs completed / failed</dt>
-              <dd className="text-right font-mono">{m.jobsCompleted} / {m.jobsFailed}</dd>
-            </dl>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

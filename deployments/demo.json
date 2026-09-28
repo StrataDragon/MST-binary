@@ -1,6 +1,6 @@
 {
-  "network": "localhost",
-  "chainId": 31337,
+  "network": "mst",
+  "chainId": 91562037,
   "machineId": "M-042",
   "machineIdBytes32": "0x4d2d303432000000000000000000000000000000000000000000000000000000",
   "machineWallet": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
@@ -8,13 +8,13 @@
   "machine051": {
     "machineId": "M-051",
     "machineIdBytes32": "0x4d2d303531000000000000000000000000000000000000000000000000000000",
-    "machineWallet": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65",
-    "machineSigner": "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
+    "machineWallet": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1",
+    "machineSigner": "0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1"
   },
   "job": null,
   "transactions": {
-    "registerMachine": "",
-    "registerMachine051": ""
+    "registerMachine": "0x194743b47643ee03c9181762ea1c85ff945256b69c54eac50e2e4b51d5bbcc2e",
+    "registerMachine051": "0x844fd1f13ab1f1c47e117cfb686f48407a5b925ab25fe1867ebc0860febe88f3"
   },
   "note": "Public info only. No private keys."
 }

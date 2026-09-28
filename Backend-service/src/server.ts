@@ -16,9 +16,10 @@ import { getJob, listJobs, upsertJob } from "./store";
 import { startChainListener } from "./chainListener";
 import { storeMetadata, getMetadataByHash } from "./metadataStore";
 import { getEvidence, listAllEvidence } from "./evidenceStore";
-import { getSimulatorStatuses, getJobQueueInfo, handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
+import { getSimulatorStatuses, getJobQueueInfo, handleSimulatorMessage, removeMachineSocket, dispatchDevJob } from "./simulatorRelay";
 import { getTransactions, addSseClient, addWsClient, recordAndEmitTx, TransactionItem } from "./transactionStore";
 import { calculateJobPrice, JobType } from "./pricingEngine";
+import { runDoctorChecks, printDoctorResults } from "./doctor";
 import * as os from "os";
 
 const app = express();
@@ -436,6 +437,21 @@ app.post("/jobs/:jobId/settle", async (req, res) => {
   }
 });
 
+// Dev-only isolation dispatch endpoint (no chain/escrow interaction)
+app.post("/api/dev/dispatch", (req, res) => {
+  const isDev = process.env.DEV_ENDPOINTS === "true" || process.env.NODE_ENV !== "production";
+  if (!isDev) {
+    return res.status(403).json({ error: "Dev endpoints disabled (DEV_ENDPOINTS must be true)" });
+  }
+
+  const { machineId = "M-042", taskType, source, target, simulateFailure, reward } = req.body || {};
+  const result = dispatchDevJob(machineId, { taskType, source, target, simulateFailure, reward });
+  if (!result.ok) {
+    return res.status(400).json(result);
+  }
+  res.json(result);
+});
+
 // Create HTTP and WebSocket server
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
@@ -494,5 +510,15 @@ server.listen(PORT, "0.0.0.0", () => {
     console.error(msg);
     throw new Error(msg);
   }
+
+  // Run doctor diagnostics on startup
+  runDoctorChecks({ isStartup: true })
+    .then(({ results }) => {
+      printDoctorResults(results);
+    })
+    .catch((err) => {
+      console.error("[doctor] Startup check error:", err);
+    });
+
   startChainListener();
 });

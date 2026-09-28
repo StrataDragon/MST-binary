@@ -279,6 +279,11 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
       machineStatus.set(msg.machineId, "IDLE");
       updateSimulatorStatus(msg.machineId, { connected: true, robotState: "IDLE", activeJobId: null });
       console.log(`[simulator-relay] MACHINE_ONLINE from ${msg.machineId} at ${msg.timestamp}`);
+      try {
+        ws.send(JSON.stringify({ type: "MACHINE_ONLINE_ACK", machineId: msg.machineId }));
+      } catch (err: any) {
+        console.error(`[simulator-relay] Failed to send MACHINE_ONLINE_ACK:`, err.message);
+      }
       dispatchNextJob(msg.machineId);
       break;
     }
@@ -318,6 +323,20 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
 
     case "JOB_COMPLETED": {
       console.log(`[simulator-relay] JOB_COMPLETED for job ${msg.jobId} by machine ${msg.machineId}`);
+      if (msg.jobId.startsWith("DEV-") || msg.jobId.startsWith("dev-")) {
+        console.log(`[simulator-relay] DEV job ${msg.jobId} completed. Bypassing on-chain settlement.`);
+        sendChainUpdate(msg.machineId, {
+          jobId: msg.jobId,
+          stage: "PAID",
+          amount: "1.0",
+        });
+        activeJobPerMachine.delete(msg.machineId);
+        machineStatus.set(msg.machineId, "IDLE");
+        updateSimulatorStatus(msg.machineId, { connected: true, robotState: "COMPLETED", activeJobId: null });
+        dispatchNextJob(msg.machineId);
+        break;
+      }
+
       const activeJob = activeJobPerMachine.get(msg.machineId);
       const evidence = {
         jobId: msg.jobId,
@@ -395,6 +414,19 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
 
     case "JOB_FAILED": {
       console.log(`[simulator-relay] JOB_FAILED for job ${msg.jobId} by machine ${msg.machineId}: ${msg.reason}`);
+      if (msg.jobId.startsWith("DEV-") || msg.jobId.startsWith("dev-")) {
+        console.log(`[simulator-relay] DEV job ${msg.jobId} failed. Bypassing on-chain refund.`);
+        sendChainUpdate(msg.machineId, {
+          jobId: msg.jobId,
+          stage: "REFUNDED",
+        });
+        activeJobPerMachine.delete(msg.machineId);
+        machineStatus.set(msg.machineId, "IDLE");
+        updateSimulatorStatus(msg.machineId, { connected: true, robotState: "FAILED", activeJobId: null });
+        dispatchNextJob(msg.machineId);
+        break;
+      }
+
       const activeJob = activeJobPerMachine.get(msg.machineId);
       const evidence = {
         jobId: msg.jobId,
@@ -465,4 +497,67 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
       break;
     }
   }
+}
+
+/**
+ * Dev-only direct dispatch to simulator without any blockchain / escrow interaction.
+ */
+export function dispatchDevJob(
+  machineId: string,
+  params: {
+    taskType?: TaskType;
+    source?: Position;
+    target?: Position;
+    simulateFailure?: boolean;
+    reward?: string;
+  }
+): { ok: boolean; jobId: string; error?: string } {
+  const ws = machineSockets.get(machineId);
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    return {
+      ok: false,
+      jobId: "",
+      error: `Simulator socket for machine ${machineId} is not connected`,
+    };
+  }
+
+  const jobId = `DEV-${Date.now()}`;
+  const startMsg: StartJobMessage = {
+    type: "START_JOB",
+    jobId,
+    machineId,
+    taskType: params.taskType || "PACKAGE_TRANSPORT",
+    reward: params.reward || "1.0",
+    source: params.source || { x: 100, y: 300 },
+    target: params.target || { x: 600, y: 300 },
+    simulateFailure: Boolean(params.simulateFailure),
+  };
+
+  machineStatus.set(machineId, "BUSY");
+  activeJobPerMachine.set(machineId, {
+    jobId,
+    machineId,
+    taskType: startMsg.taskType,
+    reward: startMsg.reward || "1.0",
+    source: startMsg.source,
+    target: startMsg.target,
+    simulateFailure: startMsg.simulateFailure,
+  });
+
+  updateSimulatorStatus(machineId, {
+    connected: true,
+    robotState: "EXECUTING",
+    activeJobId: jobId,
+  });
+
+  sendChainUpdate(machineId, {
+    jobId,
+    stage: "ESCROW_FUNDED",
+    amount: startMsg.reward,
+  });
+
+  sendToSimulator(machineId, startMsg);
+  console.log(`[simulator-relay] Dispatched isolation dev job ${jobId} directly to simulator ${machineId}`);
+
+  return { ok: true, jobId };
 }

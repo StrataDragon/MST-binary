@@ -5,20 +5,20 @@
  * Pricing is computed in the frontend and becomes msg.value in JobEscrow.createJob().
  */
 
-// Named thresholds & rate constants
-export const TRANSPORT_BASE_PRICE = 30;
-export const TRANSPORT_KM_RATE = 3;
-export const TRANSPORT_KG_RATE = 1;
+// Named thresholds & rate constants (scaled for realistic testnet balances)
+export const TRANSPORT_BASE_PRICE = 1.0;
+export const TRANSPORT_KM_RATE = 0.05;
+export const TRANSPORT_KG_RATE = 0.02;
 
-export const SORTING_BASE_PRICE = 20;
-export const SORTING_PER_OBJECT_RATE = 0.20;
-export const SORTING_PER_COLOR_RATE = 2;
+export const SORTING_BASE_PRICE = 1.0;
+export const SORTING_PER_OBJECT_RATE = 0.005;
+export const SORTING_PER_COLOR_RATE = 0.05;
 export const SORTING_ACCURACY_THRESHOLD = 95;
-export const SORTING_ACCURACY_SURCHARGE = 5;
+export const SORTING_ACCURACY_SURCHARGE = 0.1;
 
 export const URGENCY_STANDARD_FEE = 0;
-export const URGENCY_PRIORITY_FEE = 10;
-export const URGENCY_URGENT_FEE = 20;
+export const URGENCY_PRIORITY_FEE = 0.1;
+export const URGENCY_URGENT_FEE = 0.2;
 
 export interface PriceFactor {
   label: string;
@@ -65,17 +65,15 @@ export function quoteTransport(inputs: TransportInputs): QuoteResult {
       : URGENCY_STANDARD_FEE;
 
   // Demand surcharge = number of jobs currently FUNDED (open).
-  // Default to 11 if not provided
   const demandCost =
-    inputs.openJobsCount !== undefined ? Math.max(0, inputs.openJobsCount) : 11;
+    inputs.openJobsCount !== undefined ? Math.round(inputs.openJobsCount * 0.01 * 100) / 100 : 0.05;
 
   // Availability surcharge = based on active, non-busy machines
-  // Default to 10 if not provided (representing high fleet utilization)
-  let availabilityCost = 10;
+  let availabilityCost = 0.05;
   if (inputs.availableMachinesCount !== undefined) {
     if (inputs.availableMachinesCount >= 3) availabilityCost = 0;
-    else if (inputs.availableMachinesCount === 2) availabilityCost = 5;
-    else availabilityCost = 10;
+    else if (inputs.availableMachinesCount === 2) availabilityCost = 0.02;
+    else availabilityCost = 0.05;
   }
 
   const factors: PriceFactor[] = [
@@ -117,16 +115,16 @@ export function quoteSorting(inputs: SortingInputs): QuoteResult {
       ? URGENCY_PRIORITY_FEE
       : URGENCY_STANDARD_FEE;
 
-  // Demand surcharge = number of open jobs (defaults to 12)
+  // Demand surcharge = number of open jobs
   const demandCost =
-    inputs.openJobsCount !== undefined ? Math.max(0, inputs.openJobsCount) : 12;
+    inputs.openJobsCount !== undefined ? Math.round(inputs.openJobsCount * 0.01 * 100) / 100 : 0.05;
 
-  // Availability surcharge (defaults to 5)
-  let availabilityCost = 5;
+  // Availability surcharge
+  let availabilityCost = 0.05;
   if (inputs.availableMachinesCount !== undefined) {
     if (inputs.availableMachinesCount >= 3) availabilityCost = 0;
-    else if (inputs.availableMachinesCount === 2) availabilityCost = 3;
-    else availabilityCost = 5;
+    else if (inputs.availableMachinesCount === 2) availabilityCost = 0.02;
+    else availabilityCost = 0.05;
   }
 
   const factors: PriceFactor[] = [

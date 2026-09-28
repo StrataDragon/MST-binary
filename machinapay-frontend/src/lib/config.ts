@@ -95,7 +95,7 @@ export const DEFAULT_EVIDENCE_TARGET = {
 // Default form inputs for posting demo jobs
 export const DEFAULT_JOB_CONFIG = {
   description: (import.meta as any).env?.VITE_DEFAULT_JOB_DESCRIPTION || "Move package A to green zone",
-  reward: (import.meta as any).env?.VITE_DEFAULT_JOB_REWARD || "2.2",
+  reward: (import.meta as any).env?.VITE_DEFAULT_JOB_REWARD || "1.0",
   minutes: (import.meta as any).env?.VITE_DEFAULT_JOB_MINUTES || "60",
 };
 

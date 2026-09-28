@@ -251,6 +251,10 @@ export function useMachineConnection(): MachineConnection {
           window.clearTimeout(resetTimerRef.current);
           resetToIdle();
           break;
+        case "MACHINE_ONLINE_ACK":
+          console.log(`[simulator] Backend acknowledged MACHINE_ONLINE for ${msg.machineId}`);
+          setConnectionStatus("CONNECTED");
+          break;
         case "PING":
           // no-op; HEARTBEAT loop covers liveness reporting
           break;
@@ -261,6 +265,10 @@ export function useMachineConnection(): MachineConnection {
 
   // Connection lifecycle: real WebSocket, or mock backend wiring.
   useEffect(() => {
+    console.log(
+      `[machinapay-simulator] Startup config: wsUrl=${config.simulatorWsUrl}, machineId=${config.machineId}, mockMode=${config.mockMode}`
+    );
+
     if (config.mockMode) {
       setConnectionStatus("MOCK");
       const unsubscribe = mockBackend.onMessage(handleIncoming);
@@ -274,11 +282,14 @@ export function useMachineConnection(): MachineConnection {
     const connect = () => {
       if (cancelled) return;
       setConnectionStatus("CONNECTING");
+      console.log(`[simulator] Connecting to backend WebSocket at ${config.simulatorWsUrl}...`);
       const ws = new WebSocket(config.simulatorWsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
-        setConnectionStatus("CONNECTED");
+        console.log(`[simulator] WebSocket opened to ${config.simulatorWsUrl}. Sending MACHINE_ONLINE and awaiting ACK...`);
+        // Stay in CONNECTING until MACHINE_ONLINE is acknowledged by backend
+        setConnectionStatus("CONNECTING");
         send({ type: "MACHINE_ONLINE", machineId: config.machineId, timestamp: new Date().toISOString() });
       };
 
@@ -291,13 +302,16 @@ export function useMachineConnection(): MachineConnection {
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (cancelled) return;
+        console.warn(`[simulator] WebSocket connection closed (code ${ev.code}). Reconnecting in 2s...`);
         setConnectionStatus("DISCONNECTED");
         retryTimer = window.setTimeout(connect, 2000);
       };
 
-      ws.onerror = () => {
+      ws.onerror = (err) => {
+        console.error(`[simulator] WebSocket error on ${config.simulatorWsUrl}:`, err);
+        setConnectionStatus("DISCONNECTED");
         ws.close();
       };
     };

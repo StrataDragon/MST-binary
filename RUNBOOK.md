@@ -146,87 +146,145 @@ Run `npm run dev`. You can use the on-screen "SEND TEST JOB" buttons to trigger 
 
 ---
 
-## MST Testnet Configuration
-To target the MST Testnet (Chain ID `91562037`):
-1. In root `.env`:
-   ```ini
-   RPC_URL=https://testnetrpc.mstblockchain.com
-   CHAIN_ID=91562037
-   ```
-2. Deploy & Seed:
-   ```powershell
-   npm run deploy:mst
-   npm run seed:mst
-   ```
-3. Run Backend-service with the testnet `.env`.
+## MST Testnet Single-Laptop Demo
 
----
-
-## Two-Laptop Demo Setup
-
-In a production demonstration, the system runs across two physical laptops on the same Wi-Fi / Local Area Network (LAN):
-- **Laptop 1 (Host):** Runs EVM node (or MST Testnet), Backend-Service (:4000), and Customer Frontend (:5173).
-- **Laptop 2 (Robot Kiosk):** Runs 3D Robot Simulator (:5174).
+This section details the exact setup, environment variables, startup order, and troubleshooting procedures for running the entire autonomous commerce flow on **MST Testnet (Chain ID `91562037`)** using the BridgeKey wallet on a single computer.
 
 ### 1. Environment Configurations
 
-#### Laptop 1 (`Backend-service/.env` & `machinapay-frontend/.env`):
-Find Laptop 1's LAN IP using `ipconfig` (e.g. `192.168.1.50`).
+#### Root `.env` (`c:\Users\Kishan DV\OneDrive\Desktop\MST\machinapay\.env`):
+```ini
+MST_RPC_URL=https://testnetrpc.mstblockchain.com
+MST_CHAIN_ID=91562037
+MST_EXPLORER_URL=https://testnet.mstscan.com
 
-In `Backend-service/.env`:
+# Deployer / Seed wallet (must have >= 0.05 tMSTC for deployment & gas funding)
+MST_PRIVATE_KEY=0x...
+
+# Machine M-042 (Wallet: 0xcB00D7fF471334F2EeD249dF741C6E6c1B07aaf1)
+MACHINE_ID=M-042
+MACHINE_PRIVATE_KEY=0x...
+
+# Machine M-051 (Arm Picker)
+MACHINE_051_ID=M-051
+MACHINE_051_PRIVATE_KEY=0x...
+
+# Verifier Wallet (0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225)
+VERIFIER_ADDRESS=0x5C024AF5878888a9F1d4E1aAfF6a928DEc812225
+VERIFIER_PRIVATE_KEY=0x...
+
+# Pricing & Seed parameters
+MIN_STAKE=0
+MACHINE_STAKE=0.01
+JOB_REWARD=1.0
+PRICE_SCALE=0.1
+```
+
+#### Backend-Service `.env` (`Backend-service/.env`):
 ```ini
 PORT=4000
-HOST=0.0.0.0
-# The server automatically binds to 0.0.0.0 and logs LAN IPs at startup
+SELF_URL=http://localhost:4000
+DEV_ENDPOINTS=true
+
+# Contract addresses are loaded automatically from integration/machinapay.contracts.json
+CONTRACTS_JSON=./integration/machinapay.contracts.json
+RPC_URL=https://testnetrpc.mstblockchain.com
+
+MACHINE_ID=M-042
+MACHINE_PRIVATE_KEY=0x...
+
+VERIFIER_PRIVATE_KEY=0x...
 ```
 
-In `machinapay-frontend/.env`:
-```ini
-VITE_RPC_URL=http://127.0.0.1:8545
-# Or for MST Testnet:
-# VITE_RPC_URL=https://testnetrpc.mstblockchain.com
-# VITE_CHAIN_ID=91562037
-VITE_BACKEND_URL=http://localhost:4000
-```
-
-#### Laptop 2 (`machinapay-simulator/.env`):
-Replace `192.168.1.50` with Laptop 1's actual LAN IP:
+#### Simulator `.env` (`machinapay-simulator/.env`):
 ```ini
 VITE_MACHINE_ID=M-042
-VITE_SIMULATOR_WS_URL=ws://192.168.1.50:4000/ws
+VITE_SIMULATOR_WS_URL=ws://localhost:4000/ws
 VITE_MOCK_MODE=false
 VITE_AUTO_RESET_DELAY_MS=6000
 VITE_HEARTBEAT_INTERVAL_MS=5000
 ```
 
----
-
-### 2. Startup Order
-1. **[Laptop 1] Blockchain Node:** `npx hardhat node` (or ensure MST Testnet RPC is accessible).
-2. **[Laptop 1] Deploy & Seed:** `npm run deploy:local && npm run seed:local`.
-3. **[Laptop 1] Start Backend:** `cd Backend-service && npm run dev`.
-   - Check startup logs for:
-     ```
-     MachinaPay Backend service listening on 0.0.0.0:4000
-       [Two-Laptop Demo Network Info]
-       Host LAN IPs: 192.168.1.50
-     ```
-   - Verify health from Laptop 2's browser: `http://192.168.1.50:4000/health`.
-4. **[Laptop 2] Start Simulator:** `cd machinapay-simulator && npm run dev`.
-   - Open simulator in browser. Status bar should show green dot: `CONNECTED`.
-5. **[Laptop 1] Start Customer Frontend:** `cd machinapay-frontend && npm run dev`.
-   - Connect BridgeKey wallet on MST Testnet (Chain ID `91562037`) or Localhost (`31337`).
-   - Create and approve job. Robot on Laptop 2 runs automatically with zero manual clicks!
+#### Frontend `.env` (`machinapay-frontend/.env`):
+```ini
+VITE_MEMBER3_API_URL=http://localhost:4000
+VITE_SIMULATOR_URL=http://localhost:5174
+VITE_NETWORK_MODE=mst
+VITE_MST_CHAIN_ID=91562037
+VITE_MST_RPC_URL=https://testnetrpc.mstblockchain.com
+VITE_MST_EXPLORER_URL=https://testnet.mstscan.com
+VITE_PORT=5173
+VITE_MACHINE_IDS=M-042,M-051
+VITE_DEFAULT_JOB_DESCRIPTION=Move package A to green zone
+VITE_DEFAULT_JOB_REWARD=1.0
+VITE_DEFAULT_JOB_MINUTES=60
+```
 
 ---
 
-### 3. Troubleshooting Matrix
+### 2. Startup Order (Single-Laptop)
 
-| Issue | Root Cause | Solution |
-|---|---|---|
-| **Job created in wallet, but Simulator stays IDLE** | 1. Simulator in Mock Mode.<br>2. `VITE_SIMULATOR_WS_URL` is pointing to `localhost` on Laptop 2.<br>3. Windows Firewall blocking port 4000 on Laptop 1. | 1. In `machinapay-simulator/.env`, ensure `VITE_MOCK_MODE=false`.<br>2. Set `VITE_SIMULATOR_WS_URL=ws://<LAPTOP_1_IP>:4000/ws`.<br>3. Allow inbound TCP port 4000 through Windows Defender Firewall on Laptop 1.<br>4. Check `http://<LAPTOP_1_IP>:4000/health` from Laptop 2. |
-| **Metadata Rejected error (`metadataHash mismatch`)** | Frontend failed to reach `/api/jobs` before submitting on-chain transaction. | Ensure Backend-Service is running on port 4000. The frontend now strictly validates metadata registration before allowing wallet signature so jobs are never silently rejected. |
-| **Wrong Chain in BridgeKey / Transactions Revert** | BridgeKey is connected to Ethereum Mainnet or Sepolia instead of MST Testnet (`91562037`) or Hardhat (`31337`). | In BridgeKey, approve the network switch prompt or select MST Testnet (RPC: `https://testnetrpc.mstblockchain.com`, Chain ID: `91562037`, Symbol: `MSTC`). |
-| **WS Not Connecting (Red dot on Simulator)** | Backend not listening on all interfaces (`0.0.0.0`) or IP changed. | Backend now binds to `0.0.0.0`. Check Laptop 1's IP using `ipconfig` and ensure Laptop 2 can ping Laptop 1's LAN IP (`ping <LAPTOP_1_IP>`). Verify `VITE_SIMULATOR_WS_URL`. |
-| **Machine ID mismatch** | Job was created for M-051 but simulator is running as M-042. | Check `VITE_MACHINE_ID` in simulator `.env`. Each simulator instance registers its own ID (`M-042` or `M-051`). |
+Open 3 PowerShell terminals in the workspace:
+
+#### Step 1: Run Doctor & Start Backend (Terminal 1)
+```powershell
+cd "c:\Users\Kishan DV\OneDrive\Desktop\MST\machinapay\Backend-service"
+npm run doctor   # Verifies RPC, contracts, M-042, balances, verifier match, port, etc.
+npm run dev      # Starts Express & WebSocket on 0.0.0.0:4000
+```
+Expected output:
+```
+=======================================================
+             MACHINAPAY SYSTEM DOCTOR                 
+=======================================================
+[PASS] RPC & Chain ID (91562037)
+[PASS] Contracts On-Chain Code
+[PASS] Machine M-042 Registration (ACTIVE)
+[PASS] Wallet Balances for Gas (Machine & Verifier >= 0.005 tMSTC)
+[PASS] Verifier Address Match (0x5C024AF5...)
+[PASS] Metadata Store Writable
+[PASS] Port 4000 Listening
+=======================================================
+```
+
+#### Step 2: Start 3D Robot Simulator (Terminal 2)
+```powershell
+cd "c:\Users\Kishan DV\OneDrive\Desktop\MST\machinapay\machinapay-simulator"
+npm run dev
+```
+Open `http://localhost:5174`. The header must show:
+- `MACHINE: M-042`
+- `CONNECTION: LIVE — linked to backend` (green dot)
+- In the browser console:
+  `[simulator] Startup config: wsUrl=ws://localhost:4000/ws, machineId=M-042, mockMode=false`
+  `[simulator] Backend acknowledged MACHINE_ONLINE for M-042`
+
+#### Step 3: Start Customer Frontend (Terminal 3)
+```powershell
+cd "c:\Users\Kishan DV\OneDrive\Desktop\MST\machinapay\machinapay-frontend"
+npm run dev
+```
+Open `http://localhost:5173`.
+1. BridgeKey will detect MST Testnet (`91562037`).
+2. Go to **Wallet Map** or **Marketplace** or **Post a job**.
+3. Notice default reward is `1.0 tMSTC` (safe for standard testnet balances).
+4. Machine M-042 node badge shows `3D simulator online - idle` (or `offline` / `Backend unreachable` with clear distinction).
+5. Click **Lock & Post Job** -> BridgeKey popup opens -> approve transaction.
+6. Chain listener detects `JobCreated`, verifies off-chain metadata, accepts on-chain, and sends `START_JOB` to the 3D simulator.
+7. Simulator executes the physical kinematics on-screen (no manual clicks).
+8. On completion, simulator sends `JOB_COMPLETED`, backend submits EIP-712 proof, verifier attests consensus, and escrow releases payment to `0xcB00D7fF...`.
+
+---
+
+### 3. Comprehensive Troubleshooting Table
+
+| Symptom / Issue | Root Cause | Diagnosis | Fix |
+|---|---|---|---|
+| **"Insufficient MSTC in wallet to pay reward and network gas"** | Default reward was 10 or 100 tMSTC, exceeding wallet balance (~9.8 tMSTC). | Pre-flight check calculates `rewardWei + estGasCost > userBalance`. | Click the new **"⚡ Use max safe reward"** button. Default reward is now configured to `1.0 tMSTC`. |
+| **"3D simulator offline" while simulator tab shows CONNECTED** | 1. Simulator running in `VITE_MOCK_MODE=true`.<br>2. WebSocket URL wrong (`ws://localhost:3000` instead of `4000`).<br>3. Backend `/api/simulator/status` not polled. | Check browser console at `http://localhost:5174`: look for `[simulator] Startup config`. | Set `VITE_MOCK_MODE=false` in `machinapay-simulator/.env`. Verify TopBar shows `LIVE — linked to backend`. Frontend now distinguishes `Backend unreachable` from `3D simulator offline`. |
+| **Job rejected with "metadataHash does not match registered canonical metadata"** | On-chain `createJob` was sent with a metadata hash that was never registered at `POST /api/jobs`. | Backend logs: `REJECTED job: metadataHash does not match`. | Ensure Backend-service is running on port 4000 before posting a job. All three frontend forms now pre-register metadata and verify receipt before prompting the wallet. |
+| **Wrong chain / transactions revert silently** | BridgeKey or provider connected to Hardhat (`31337`) or Mainnet instead of MST Testnet (`91562037`). | Check `window.ethereum.chainId` in DevTools console. | In BridgeKey, switch network to MST Testnet (`https://testnetrpc.mstblockchain.com`, Chain ID `91562037`). Frontend validates `chainId == 91562037` before sending transactions. |
+| **Machine M-042 node inactive / unassigned** | Machine not registered in `MachineRegistry.sol` on MST Testnet. | Run `npm run doctor` in `Backend-service`. Check `[FAIL] Machine M-042 Registration`. | Run `npm run seed:mst` from repo root to register M-042 and M-051 with initial stake on-chain. |
+| **chainListener stops processing events / RPC query filter errors** | `lastProcessedBlock` initialized to 0 on MST Testnet (5.7M blocks), triggering RPC query range limits. | Backend logs: silent failure or `range exceeds limit`. | Fixed in `chainListener.ts`: initialization now starts at `currentBlock - 50` and automatically chunks block queries into max 1,000 block windows. |
+| **Simulator link needs verification without spending testnet coins** | Verifying WS & kinematics separate from on-chain transactions. | Need isolated simulator dispatch test. | Use the dev-only isolation endpoint: `Invoke-RestMethod -Uri "http://localhost:4000/api/dev/dispatch" -Method Post -ContentType "application/json" -Body '{"machineId":"M-042"}'`. Dispatches directly to simulator with zero escrow interaction. |
 

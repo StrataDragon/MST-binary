@@ -15,13 +15,13 @@ function stateCopy(robotState: RobotState, taskType: TaskType | null): string {
 function connectionCopy(status: ConnectionStatus): { text: string; dot: "online" | "offline" | "pending" } {
   switch (status) {
     case "CONNECTED":
-      return { text: "CONNECTED", dot: "online" };
+      return { text: "LIVE — linked to backend", dot: "online" };
     case "MOCK":
-      return { text: "MOCK MODE", dot: "pending" };
+      return { text: "MOCK — offline", dot: "pending" };
     case "CONNECTING":
       return { text: "CONNECTING…", dot: "pending" };
     case "DISCONNECTED":
-      return { text: "DISCONNECTED — RETRYING", dot: "offline" };
+      return { text: "DISCONNECTED — offline", dot: "offline" };
   }
 }
 
@@ -97,7 +97,7 @@ export function TopBar({
           <div className="metric-chip">
             <div className="metric-label">REWARD ESCROWED</div>
             <div className="metric-value" style={{ color: "var(--amber)" }}>
-              {reward ?? "100"} MST
+              {reward ?? "1.0"} tMSTC
             </div>
           </div>
         )}

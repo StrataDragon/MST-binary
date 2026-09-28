@@ -77,12 +77,18 @@ export type PingMessage = {
   type: "PING";
 };
 
+export type MachineOnlineAckMessage = {
+  type: "MACHINE_ONLINE_ACK";
+  machineId: string;
+};
+
 export type IncomingMessage =
   | StartJobMessage
   | CancelJobMessage
   | ResetMachineMessage
   | PingMessage
-  | ChainUpdateMessage;
+  | ChainUpdateMessage
+  | MachineOnlineAckMessage;
 
 
 // ---------------------------------------------------------------------------
@@ -166,7 +172,8 @@ export function isIncomingMessage(data: unknown): data is IncomingMessage {
     t === "CANCEL_JOB" ||
     t === "RESET_MACHINE" ||
     t === "PING" ||
-    t === "CHAIN_UPDATE"
+    t === "CHAIN_UPDATE" ||
+    t === "MACHINE_ONLINE_ACK"
   );
 }
 
