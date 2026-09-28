@@ -1,5 +1,12 @@
-import { useState, useEffect } from "react";
-import { connectWallet, WalletError, getLiveBalance, getReadProvider } from "../lib/wallet";
+import React, { useState, useEffect } from "react";
+import { BrowserProvider } from "ethers";
+import {
+  connectWallet,
+  findBridgeKeyProviderAsync,
+  findBridgeKeyProvider,
+  getLiveBalance,
+  getReadProvider,
+} from "../lib/wallet";
 import { cfg, NATIVE_SYMBOL } from "../lib/config";
 import {
   Wallet,
@@ -22,7 +29,6 @@ export function ConnectWallet({
   const [address, setAddress] = useState<string | null>(null);
   const [balance, setBalance] = useState<string>("0.0000");
   const [walletName, setWalletName] = useState<string>("BridgeKey");
-  const [isBridgeKey, setIsBridgeKey] = useState<boolean>(true);
   const [error, setError] = useState<{ message: string; isNoProvider: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -47,6 +53,80 @@ export function ConnectWallet({
     };
   }, []);
 
+  // Auto-detect existing authorized session on mount or when BridgeKey initializes
+  useEffect(() => {
+    let mounted = true;
+
+    async function checkExistingAuth() {
+      try {
+        const raw = await findBridgeKeyProviderAsync(1000);
+        if (!raw || !mounted) return;
+
+        const accounts: string[] = await raw.request({ method: "eth_accounts" });
+        if (mounted && Array.isArray(accounts) && accounts.length > 0 && accounts[0]) {
+          const provider = new BrowserProvider(raw);
+          const signer = await provider.getSigner();
+          const addr = accounts[0];
+          setAddress(addr);
+          setWalletName(raw.isBridgeKey || (window as any).bridgekey ? "BridgeKey" : "Web3 Wallet");
+          onConnected(addr, signer);
+          const bal = await getLiveBalance(addr);
+          if (mounted) setBalance(bal);
+        }
+      } catch {
+        // Non-blocking
+      }
+    }
+
+    checkExistingAuth();
+
+    function handleAccountsChanged(accs: string[]) {
+      if (!mounted) return;
+      if (!accs || accs.length === 0) {
+        setAddress(null);
+        setBalance("0.0000");
+      } else {
+        const newAddr = accs[0];
+        setAddress(newAddr);
+        const raw = findBridgeKeyProvider();
+        if (raw) {
+          const provider = new BrowserProvider(raw);
+          provider.getSigner().then((s) => onConnected(newAddr, s));
+        }
+        getLiveBalance(newAddr).then((b) => {
+          if (mounted) setBalance(b);
+        });
+      }
+    }
+
+    function handleChainChanged() {
+      window.location.reload();
+    }
+
+    const raw = findBridgeKeyProvider();
+    if (raw?.on) {
+      raw.on("accountsChanged", handleAccountsChanged);
+      raw.on("chainChanged", handleChainChanged);
+    }
+
+    // Also listen to custom initialization events from BridgeKey
+    const handleInitialized = () => {
+      checkExistingAuth();
+    };
+    window.addEventListener("bridgekey#initialized", handleInitialized);
+    window.addEventListener("ethereum#initialized", handleInitialized);
+
+    return () => {
+      mounted = false;
+      if (raw?.removeListener) {
+        raw.removeListener("accountsChanged", handleAccountsChanged);
+        raw.removeListener("chainChanged", handleChainChanged);
+      }
+      window.removeEventListener("bridgekey#initialized", handleInitialized);
+      window.removeEventListener("ethereum#initialized", handleInitialized);
+    };
+  }, []);
+
   async function handleConnect() {
     setBusy(true);
     setError(null);
@@ -54,16 +134,17 @@ export function ConnectWallet({
       const res = await connectWallet();
       setAddress(res.address);
       setWalletName(res.walletName);
-      setIsBridgeKey(res.isBridgeKey);
       onConnected(res.address, res.signer);
 
       const bal = await getLiveBalance(res.address);
       setBalance(bal);
     } catch (e: any) {
+      console.error("Connect BridgeKey error:", e);
       const isNoProvider =
         e?.code === "NO_PROVIDER" ||
         e?.message?.toLowerCase().includes("please install bridgekey") ||
         e?.message?.toLowerCase().includes("no web3 wallet");
+
       setError({
         message: e?.message || "Could not connect BridgeKey wallet",
         isNoProvider,
@@ -108,7 +189,7 @@ export function ConnectWallet({
           {/* Copy Address Button */}
           <button
             onClick={handleCopy}
-            className="p-1.5 rounded-full hover:bg-gray-800 text-gray-400 hover:text-white transition"
+            className="p-1.5 rounded-full hover:bg-gray-800 text-gray-400 hover:text-white transition cursor-pointer"
             title="Copy wallet address"
           >
             {copied ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
@@ -187,7 +268,7 @@ export function ConnectWallet({
 
             {/* Disclaimer */}
             <div className="pt-2 border-t border-gray-800/80 text-[10px] text-amber-300/80 bg-amber-500/10 p-2 rounded">
-              MST Testnet — test coins have no real value.
+              MST Testnet - test coins have no real value.
             </div>
           </div>
         )}
@@ -221,7 +302,7 @@ export function ConnectWallet({
         className="flex items-center gap-1.5 rounded-full bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-1.5 text-xs font-mono font-semibold shadow-xs transition disabled:opacity-50 cursor-pointer"
       >
         <Wallet className="w-3.5 h-3.5" />
-        <span>{busy ? "Connecting…" : "Connect BridgeKey"}</span>
+        <span>{busy ? "Connecting..." : "Connect BridgeKey"}</span>
       </button>
     </div>
   );

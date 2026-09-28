@@ -172,4 +172,31 @@ describe("lib/wallet.ts Unit Tests", () => {
       expect(parseFloat(estimation.estimatedCostEth)).toBeCloseTo(0.000042, 6);
     });
   });
+
+  describe("findBridgeKeyProvider", () => {
+    it("discovers dedicated window.bridgekey provider directly", () => {
+      const mockBridgeKeyProvider = {
+        isBridgeKey: true,
+        request: vi.fn(),
+      };
+      (window as any).bridgekey = mockBridgeKeyProvider;
+
+      const found = walletModule.findBridgeKeyProvider();
+      expect(found).toBe(mockBridgeKeyProvider);
+      delete (window as any).bridgekey;
+    });
+
+    it("discovers window.ethereum when isBridgeKey is set", () => {
+      delete (window as any).bridgekey;
+      const mockEthBridgeKey = {
+        isBridgeKey: true,
+        request: vi.fn(),
+      };
+      (window as any).ethereum = mockEthBridgeKey;
+
+      const found = walletModule.findBridgeKeyProvider();
+      expect(found).toBe(mockEthBridgeKey);
+      delete (window as any).ethereum;
+    });
+  });
 });

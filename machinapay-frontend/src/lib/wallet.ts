@@ -20,6 +20,13 @@ export class WalletError extends Error {
   }
 }
 
+function withTimeout<T>(promise: Promise<T>, ms = 6000, errorMsg = "RPC request timed out"): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), ms)),
+  ]);
+}
+
 // -------------------------------------------------------------
 // EIP-6963: Multi-Injected Provider Discovery
 // -------------------------------------------------------------
@@ -61,42 +68,84 @@ export function getDiscoveredProviders(): EIP6963ProviderDetail[] {
 }
 
 /**
- * Searches for BridgeKey provider via EIP-6963, then window.ethereum fallback
+ * Searches for BridgeKey provider via:
+ * 1. Dedicated window.bridgekey / window.BridgeKey
+ * 2. EIP-6963 announced providers (BridgeKey rdns / uuid)
+ * 3. window.ethereum with isBridgeKey flag or inside providers array
+ * 4. General window.ethereum fallback
  */
 export function findBridgeKeyProvider(): any {
-  // 1. Search EIP-6963 announced providers
+  if (typeof window === "undefined") return null;
+  const w = window as any;
+
+  // 1. Direct BridgeKey provider namespace
+  if (w.bridgekey && typeof w.bridgekey.request === "function") {
+    return w.bridgekey;
+  }
+  if (w.BridgeKey && typeof w.BridgeKey.request === "function") {
+    return w.BridgeKey;
+  }
+
+  // 2. Search EIP-6963 announced providers
   for (const detail of announcedProviders.values()) {
     const name = detail.info.name?.toLowerCase() || "";
     const rdns = detail.info.rdns?.toLowerCase() || "";
-    if (name.includes("bridgekey") || rdns.includes("bridgekey")) {
-      if (process.env.NODE_ENV !== "production") {
-        console.log(`[BridgeKey Discovery] Selected EIP-6963 BridgeKey provider:`, detail.info);
-      }
+    const uuid = detail.info.uuid?.toLowerCase() || "";
+    if (
+      name.includes("bridgekey") ||
+      rdns.includes("bridgekey") ||
+      rdns === "io.bridgekey.wallet" ||
+      uuid === "c8f3e2a1-9b4d-4e7f-a2c1-8d5e6f7a8b9c"
+    ) {
       return detail.provider;
     }
   }
 
-  // 2. Search window.ethereum
-  const eth = typeof window !== "undefined" ? (window as any).ethereum : null;
-  if (!eth) return null;
+  // 3. Search window.ethereum if it has BridgeKey markers
+  const eth = w.ethereum;
+  if (eth) {
+    if (eth.isBridgeKey) return eth;
 
-  // If multiple providers injected in window.ethereum.providers
-  if (Array.isArray(eth.providers)) {
-    for (const p of eth.providers) {
-      const pName = (p.name || "").toLowerCase();
-      if (p.isBridgeKey || pName.includes("bridgekey")) {
-        if (process.env.NODE_ENV !== "production") {
-          console.log(`[BridgeKey Discovery] Selected provider from ethereum.providers array.`);
+    if (Array.isArray(eth.providers)) {
+      for (const p of eth.providers) {
+        const pName = (p.name || "").toLowerCase();
+        if (p.isBridgeKey || pName.includes("bridgekey")) {
+          return p;
         }
-        return p;
       }
     }
   }
 
-  if (process.env.NODE_ENV !== "production") {
-    console.log(`[BridgeKey Discovery] Falling back to standard window.ethereum provider.`);
+  // 4. Any announced provider
+  if (announcedProviders.size > 0) {
+    return Array.from(announcedProviders.values())[0].provider;
   }
-  return eth;
+
+  // 5. Standard window.ethereum fallback
+  if (eth && typeof eth.request === "function") {
+    return eth;
+  }
+
+  return null;
+}
+
+/**
+ * Asynchronously waits for BridgeKey or Web3 provider injection
+ */
+export async function findBridgeKeyProviderAsync(timeoutMs = 1200): Promise<any> {
+  if (typeof window === "undefined") return null;
+
+  try {
+    window.dispatchEvent(new Event("eip6963:requestProvider"));
+  } catch {}
+
+  const startTime = Date.now();
+  while (Date.now() - startTime < timeoutMs) {
+    const p = findBridgeKeyProvider();
+    if (p) return p;
+    await new Promise((r) => setTimeout(r, 60));
+  }
+  return findBridgeKeyProvider();
 }
 
 const hexChainId = "0x" + cfg.chainId.toString(16);
@@ -122,7 +171,7 @@ export async function connectWallet(): Promise<{
   isBridgeKey: boolean;
   walletName: string;
 }> {
-  const rawProvider = findBridgeKeyProvider();
+  const rawProvider = await findBridgeKeyProviderAsync(1200);
   if (!rawProvider) {
     throw new WalletError(
       "NO_PROVIDER",
@@ -133,8 +182,13 @@ export async function connectWallet(): Promise<{
   const isBridgeKey = Boolean(
     rawProvider.isBridgeKey ||
     (rawProvider.name && String(rawProvider.name).toLowerCase().includes("bridgekey")) ||
+    (typeof window !== "undefined" && (window as any).bridgekey === rawProvider) ||
     Array.from(announcedProviders.values()).some(
-      (d) => (d.info.name.toLowerCase().includes("bridgekey") || d.info.rdns.toLowerCase().includes("bridgekey")) && d.provider === rawProvider
+      (d) =>
+        (d.info.name.toLowerCase().includes("bridgekey") ||
+          d.info.rdns.toLowerCase().includes("bridgekey") ||
+          d.info.uuid === "c8f3e2a1-9b4d-4e7f-a2c1-8d5e6f7a8b9c") &&
+        d.provider === rawProvider
     )
   );
 
@@ -144,55 +198,85 @@ export async function connectWallet(): Promise<{
     ? "MetaMask"
     : "Web3 Wallet";
 
-  // Request account connection
-  await rawProvider.request({ method: "eth_requestAccounts" });
+  // Request account connection with retry if provider is initializing
+  let accounts: string[] = [];
+  let lastErr: any = null;
 
-  // Verify / Switch to required network
-  try {
-    await rawProvider.request({
-      method: "wallet_switchEthereumChain",
-      params: [{ chainId: hexChainId }],
-    });
-  } catch (switchErr: any) {
-    // If chain not added or switch unsupported, attempt wallet_addEthereumChain
-    let added = false;
+  for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      await rawProvider.request({
-        method: "wallet_addEthereumChain",
-        params: [
-          {
-            chainId: hexChainId,
-            chainName: cfg.network,
-            rpcUrls: [cfg.rpcUrl],
-            nativeCurrency: { name: cfg.nativeToken, symbol: cfg.nativeToken, decimals: 18 },
-            blockExplorerUrls: cfg.explorerUrl ? [cfg.explorerUrl] : [],
-          },
-        ],
-      });
-      added = true;
-    } catch {
-      // Ignored if add chain fails or is not supported
+      accounts = await rawProvider.request({ method: "eth_requestAccounts" });
+      if (Array.isArray(accounts) && accounts.length > 0) {
+        break;
+      }
+    } catch (err: any) {
+      lastErr = err;
+      const msg = err?.message?.toLowerCase() || "";
+      if (msg.includes("still loading") || msg.includes("try again in a moment")) {
+        await new Promise((r) => setTimeout(r, 400));
+        continue;
+      }
+      if (err?.code === 4001 || msg.includes("user rejected") || msg.includes("cancelled")) {
+        throw new WalletError("ACTION_REJECTED", "Connection request was rejected in BridgeKey.");
+      }
+      throw err;
     }
+  }
 
-    if (!added) {
-      // Check current chain ID
+  if (!accounts || accounts.length === 0) {
+    try {
+      accounts = await rawProvider.request({ method: "eth_accounts" });
+    } catch {}
+  }
+
+  if (!accounts || accounts.length === 0) {
+    if (lastErr) throw lastErr;
+    throw new WalletError("NO_ACCOUNTS", "No accounts returned from wallet.");
+  }
+
+  // Verify / Switch to required network (only if currently on a different chain)
+  try {
+    const currentHex = await rawProvider.request({ method: "eth_chainId" }).catch(() => null);
+    if (currentHex && parseInt(currentHex, 16) !== cfg.chainId) {
       try {
-        const currentHex = await rawProvider.request({ method: "eth_chainId" });
-        if (currentHex && parseInt(currentHex, 16) !== cfg.chainId) {
-          throw new WalletError(
-            "WRONG_NETWORK",
-            `Please switch to ${cfg.network} in BridgeKey (Chain ID: ${cfg.chainId}).`
-          );
+        await rawProvider.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: hexChainId }],
+        });
+      } catch (switchErr: any) {
+        // If switch fails, attempt to add the chain
+        try {
+          await rawProvider.request({
+            method: "wallet_addEthereumChain",
+            params: [
+              {
+                chainId: hexChainId,
+                chainName: cfg.network,
+                rpcUrls: [cfg.rpcUrl],
+                nativeCurrency: { name: cfg.nativeToken, symbol: cfg.nativeToken, decimals: 18 },
+                blockExplorerUrls: cfg.explorerUrl ? [cfg.explorerUrl] : [],
+              },
+            ],
+          });
+        } catch {
+          // If still different, warn user
+          const verifyHex = await rawProvider.request({ method: "eth_chainId" }).catch(() => null);
+          if (verifyHex && parseInt(verifyHex, 16) !== cfg.chainId) {
+            throw new WalletError(
+              "WRONG_NETWORK",
+              `Please switch to ${cfg.network} in BridgeKey (Chain ID: ${cfg.chainId}).`
+            );
+          }
         }
-      } catch (chainErr: any) {
-        if (chainErr instanceof WalletError) throw chainErr;
       }
     }
+  } catch (chainErr: any) {
+    if (chainErr instanceof WalletError) throw chainErr;
+    console.warn("Chain verification check:", chainErr);
   }
 
   const provider = new BrowserProvider(rawProvider);
   const signer = await provider.getSigner();
-  const address = await signer.getAddress();
+  const address = accounts[0] || (await signer.getAddress());
 
   return { provider, address, signer, isBridgeKey, walletName };
 }
@@ -278,11 +362,28 @@ export async function estimateTransferGas(
   return { gasLimit, maxFeePerGas, estimatedCostEth };
 }
 
-/** Fetch live on-chain balance via read-only provider */
+/** Fetch live on-chain balance via wallet or read-only provider */
 export async function getLiveBalance(address: string): Promise<string> {
+  // 1. Try directly via wallet provider if available
+  try {
+    const raw = findBridgeKeyProvider();
+    if (raw && typeof raw.request === "function") {
+      const hexBal = await withTimeout(
+        raw.request({ method: "eth_getBalance", params: [address, "latest"] }),
+        3500
+      );
+      if (hexBal && typeof hexBal === "string") {
+        return Number(formatEther(BigInt(hexBal))).toFixed(4);
+      }
+    }
+  } catch {
+    // Fallback to read provider
+  }
+
+  // 2. Fallback to read-only JSON-RPC provider
   try {
     const provider = getReadProvider();
-    const bal = await provider.getBalance(address);
+    const bal = await withTimeout(provider.getBalance(address), 5000);
     return Number(formatEther(bal)).toFixed(4);
   } catch {
     return "0.0000";
