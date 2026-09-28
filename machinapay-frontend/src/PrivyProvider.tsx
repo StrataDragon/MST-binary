@@ -24,16 +24,20 @@ export function MachinaPayPrivyProvider({
 }: {
   children: ReactNode;
 }) {
-  const effectiveAppId = appId || "cm_machinapay_mst_testnet_demo";
+  const effectiveAppId =
+    appId && /^c[a-z0-9]{20,35}$/i.test(appId)
+      ? appId
+      : "cl00000000000000000000000";
+
   if (!appId && typeof window !== "undefined") {
     console.info(
-      "[MachinaPay] VITE_PRIVY_APP_ID not configured in .env. Privy social/email logins will use demo fallback mode; BridgeKey and injected Web3 wallets remain fully active."
+      "[MachinaPay] VITE_PRIVY_APP_ID not configured in .env. BridgeKey and injected Web3 wallets are active."
     );
   }
 
   return (
     <PrivyProvider
-      appId={appId}
+      appId={effectiveAppId}
       config={{
         loginMethods: ["google", "email"],
 

@@ -165,25 +165,26 @@ echo [5/6] Checking Backend-service...
 netstat -ano | findstr ":4000 " | findstr "LISTENING" >nul 2>&1
 if %ERRORLEVEL% equ 0 (
     echo [INFO] Backend-service is already running on port 4000.
-) else (
-    echo [INFO] Spawning Backend-service in a new window...
-    start "MachinaPay Backend Service" cmd /k "cd /d "%~dp0Backend-service" && npm.cmd run dev"
-    
-    echo [INFO] Waiting for Backend-service on port 4000...
-    set RETRIES=0
-    :WAIT_BACKEND
-    netstat -ano | findstr ":4000 " | findstr "LISTENING" >nul 2>&1
-    if !ERRORLEVEL! equ 0 goto BACKEND_READY
-    set /a RETRIES+=1
-    if !RETRIES! geq 30 (
-        echo [WARNING] Backend-service is still starting up, proceeding...
-        goto BACKEND_READY
-    )
-    ping 127.0.0.1 -n 2 >nul
-    goto WAIT_BACKEND
-    :BACKEND_READY
-    echo [SUCCESS] Backend-service is ready!
+    goto SKIP_SPAWN_BACKEND
 )
+echo [INFO] Spawning Backend-service in a new window...
+start "MachinaPay Backend Service" cmd /k "cd /d "%~dp0Backend-service" && npm.cmd run dev"
+
+echo [INFO] Waiting for Backend-service on port 4000...
+set RETRIES=0
+:WAIT_BACKEND
+netstat -ano | findstr ":4000 " | findstr "LISTENING" >nul 2>&1
+if %ERRORLEVEL% equ 0 goto BACKEND_READY
+set /a RETRIES+=1
+if %RETRIES% geq 30 (
+    echo [WARNING] Backend-service is still starting up, proceeding...
+    goto BACKEND_READY
+)
+ping 127.0.0.1 -n 2 >nul
+goto WAIT_BACKEND
+:BACKEND_READY
+echo [SUCCESS] Backend-service is ready!
+:SKIP_SPAWN_BACKEND
 
 REM 8. Start Frontend in new window if not already running
 echo.
@@ -191,50 +192,55 @@ echo [6/6] Checking Frontend...
 netstat -ano | findstr ":5173 " | findstr "LISTENING" >nul 2>&1
 if %ERRORLEVEL% equ 0 (
     echo [INFO] Frontend is already running on port 5173.
-) else (
-    echo [INFO] Spawning Frontend in a new window...
-    start "MachinaPay Frontend" cmd /k "cd /d "%~dp0machinapay-frontend" && npm.cmd run dev"
-    
-    echo [INFO] Waiting for Frontend on port 5173...
-    set RETRIES=0
-    :WAIT_FRONTEND
-    netstat -ano | findstr ":5173 " | findstr "LISTENING" >nul 2>&1
-    if !ERRORLEVEL! equ 0 goto FRONTEND_READY
-    set /a RETRIES+=1
-    if !RETRIES! geq 30 (
-        echo [WARNING] Frontend is still starting up, proceeding...
-        goto FRONTEND_READY
-    )
-    ping 127.0.0.1 -n 2 >nul
-    goto WAIT_FRONTEND
-    :FRONTEND_READY
-    echo [SUCCESS] Frontend is ready!
+    goto SKIP_SPAWN_FRONTEND
 )
+echo [INFO] Spawning Frontend in a new window...
+start "MachinaPay Frontend" cmd /k "cd /d "%~dp0machinapay-frontend" && npm.cmd run dev"
+
+echo [INFO] Waiting for Frontend on port 5173...
+set RETRIES=0
+:WAIT_FRONTEND
+netstat -ano | findstr ":5173 " | findstr "LISTENING" >nul 2>&1
+if %ERRORLEVEL% equ 0 goto FRONTEND_READY
+set /a RETRIES+=1
+if %RETRIES% geq 30 (
+    echo [WARNING] Frontend is still starting up, proceeding...
+    goto FRONTEND_READY
+)
+ping 127.0.0.1 -n 2 >nul
+goto WAIT_FRONTEND
+:FRONTEND_READY
+echo [SUCCESS] Frontend is ready!
+:SKIP_SPAWN_FRONTEND
 
 REM 9. Start 3D Simulator in new window if available
-if exist "machinapay-simulator" (
-    echo.
-    echo [BONUS] Checking 3D Robot Simulator...
-    netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        echo [INFO] 3D Robot Simulator is already running on port 5174.
-    ) else (
-        echo [INFO] Spawning 3D Robot Simulator in a new window...
-        start "MachinaPay 3D Robot Simulator" cmd /k "cd /d "%~dp0machinapay-simulator" && npm.cmd run dev"
-        
-        echo [INFO] Waiting for 3D Robot Simulator on port 5174...
-        for /l %%i in (1,1,30) do (
-            netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
-            if !ERRORLEVEL! equ 0 (
-                echo [SUCCESS] 3D Robot Simulator is ready on port 5174!
-                goto SIM_DONE
-            )
-            ping 127.0.0.1 -n 2 >nul
-        )
-        echo [WARNING] 3D Robot Simulator is still starting up, proceeding...
-        :SIM_DONE
-    )
+if not exist "machinapay-simulator" goto SKIP_SIMULATOR
+echo.
+echo [BONUS] Checking 3D Robot Simulator...
+netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    echo [INFO] 3D Robot Simulator is already running on port 5174.
+    goto SKIP_SIMULATOR
 )
+echo [INFO] Spawning 3D Robot Simulator in a new window...
+start "MachinaPay 3D Robot Simulator" cmd /k "cd /d "%~dp0machinapay-simulator" && npm.cmd run dev"
+
+echo [INFO] Waiting for 3D Robot Simulator on port 5174...
+set RETRIES=0
+:WAIT_SIM
+netstat -ano | findstr ":5174 " | findstr "LISTENING" >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    echo [SUCCESS] 3D Robot Simulator is ready on port 5174!
+    goto SKIP_SIMULATOR
+)
+set /a RETRIES+=1
+if %RETRIES% geq 30 (
+    echo [WARNING] 3D Robot Simulator is still starting up, proceeding...
+    goto SKIP_SIMULATOR
+)
+ping 127.0.0.1 -n 2 >nul
+goto WAIT_SIM
+:SKIP_SIMULATOR
 
 echo.
 echo ======================================================================
