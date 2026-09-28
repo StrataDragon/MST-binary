@@ -1,5 +1,5 @@
-import { Suspense, useRef } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import { Suspense, useEffect, useRef } from "react";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, ContactShadows, Grid, MeshReflectorMaterial, Sparkles } from "@react-three/drei";
 import { EffectComposer, Bloom, Vignette } from "@react-three/postprocessing";
 import * as THREE from "three";
@@ -153,6 +153,26 @@ function CinematicRig() {
   );
 }
 
+/**
+ * R3F already tracks the Canvas size, but a landscape camera can crop the
+ * work zone when the simulator is embedded in a narrow dashboard or opened
+ * on a phone. Reframe only on a real resize; user orbit controls stay intact
+ * during normal operation.
+ */
+function ResponsiveCamera() {
+  const { camera, size } = useThree();
+
+  useEffect(() => {
+    if (!(camera instanceof THREE.PerspectiveCamera)) return;
+    const compact = size.width < 620 || size.height < 390;
+    camera.fov = compact ? 58 : 50;
+    camera.position.set(compact ? 2.4 : 2, compact ? 8.8 : 7.5, compact ? 15.6 : 13);
+    camera.updateProjectionMatrix();
+  }, [camera, size.height, size.width]);
+
+  return null;
+}
+
 export function Scene3D({
   state,
   phaseProgress,
@@ -175,7 +195,13 @@ export function Scene3D({
   const { sourceZoneLabel, targetZoneLabel } = getTaskConfig(taskType ?? undefined);
 
   return (
-    <Canvas shadows camera={{ position: [2, 7.5, 13], fov: 50 }}>
+    <Canvas
+      shadows
+      dpr={[1, 1.5]}
+      camera={{ position: [2, 7.5, 13], fov: 50 }}
+      gl={{ antialias: true, powerPreference: "high-performance" }}
+      style={{ width: "100%", height: "100%", touchAction: "none" }}
+    >
       <color attach="background" args={["#0B0D11"]} />
       <fog attach="fog" args={["#0B0D11", 17, 36]} />
 
@@ -253,6 +279,7 @@ export function Scene3D({
       <ContactShadows position={[0, 0.01, 0]} opacity={0.6} scale={20} blur={1.6} far={4} />
 
       <CinematicRig />
+      <ResponsiveCamera />
 
       <EffectComposer multisampling={0}>
         <Bloom luminanceThreshold={0.35} luminanceSmoothing={0.25} intensity={0.65} mipmapBlur />

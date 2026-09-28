@@ -71,6 +71,10 @@ export function getContractConfig() {
 export const MEMBER3_API_URL =
   (import.meta as any).env?.VITE_MEMBER3_API_URL || "http://localhost:4000";
 
+// Standalone 3D machine console, linked from the live Wallet Map.
+export const SIMULATOR_URL =
+  (import.meta as any).env?.VITE_SIMULATOR_URL || "http://localhost:5174";
+
 // Machine IDs to show in the UI if not fetched dynamically from the registry contract
 export const DEFAULT_MACHINE_IDS: string[] = (
   (import.meta as any).env?.VITE_MACHINE_IDS

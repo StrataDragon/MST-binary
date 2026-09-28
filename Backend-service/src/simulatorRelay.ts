@@ -39,11 +39,54 @@ const machineStatus = new Map<string, "IDLE" | "BUSY">();
 const machineQueues = new Map<string, QueueJobItem[]>();
 const activeJobPerMachine = new Map<string, QueueJobItem>();
 
+export type SimulatorMachineStatus = {
+  machineId: string;
+  connected: boolean;
+  robotState: string;
+  activeJobId: string | null;
+  queueLength: number;
+  updatedAt: string;
+};
+
+const simulatorStatus = new Map<string, SimulatorMachineStatus>();
+
+function updateSimulatorStatus(
+  machineId: string,
+  update: Partial<Omit<SimulatorMachineStatus, "machineId">>
+) {
+  const current = simulatorStatus.get(machineId);
+  simulatorStatus.set(machineId, {
+    machineId,
+    connected: current?.connected ?? false,
+    robotState: current?.robotState ?? "IDLE",
+    activeJobId: current?.activeJobId ?? null,
+    queueLength: machineQueues.get(machineId)?.length ?? 0,
+    updatedAt: new Date().toISOString(),
+    ...update,
+  });
+}
+
+/** Read-only status consumed by the customer dashboard. */
+export function getSimulatorStatuses(): SimulatorMachineStatus[] {
+  const machineIds = new Set([...simulatorStatus.keys(), ...machineSockets.keys(), ...machineQueues.keys()]);
+  return [...machineIds]
+    .map((machineId) => simulatorStatus.get(machineId) ?? {
+      machineId,
+      connected: false,
+      robotState: "OFFLINE",
+      activeJobId: null,
+      queueLength: machineQueues.get(machineId)?.length ?? 0,
+      updatedAt: new Date(0).toISOString(),
+    })
+    .sort((a, b) => a.machineId.localeCompare(b.machineId));
+}
+
 export function registerMachineSocket(machineId: string, ws: WebSocket) {
   machineSockets.set(machineId, ws);
   if (!machineStatus.has(machineId)) {
     machineStatus.set(machineId, "IDLE");
   }
+  updateSimulatorStatus(machineId, { connected: true });
   console.log(`[simulator-relay] Machine ${machineId} socket registered. Ready.`);
 }
 
@@ -51,6 +94,7 @@ export function removeMachineSocket(ws: WebSocket) {
   for (const [id, socket] of machineSockets.entries()) {
     if (socket === ws) {
       machineSockets.delete(id);
+      updateSimulatorStatus(id, { connected: false, robotState: "OFFLINE", activeJobId: null });
       console.log(`[simulator-relay] Machine ${id} socket disconnected.`);
       break;
     }
@@ -92,6 +136,7 @@ export function enqueueJob(job: QueueJobItem) {
   if (!list.some((j) => j.jobId.toLowerCase() === job.jobId.toLowerCase())) {
     list.push(job);
     machineQueues.set(job.machineId, list);
+    updateSimulatorStatus(job.machineId, { queueLength: list.length });
     console.log(
       `[simulator-relay] Enqueued job ${job.jobId.slice(0, 10)}… for machine ${job.machineId} (queue length: ${list.length})`
     );
@@ -119,6 +164,12 @@ export async function dispatchNextJob(machineId: string) {
   machineQueues.set(machineId, list);
   machineStatus.set(machineId, "BUSY");
   activeJobPerMachine.set(machineId, job);
+  updateSimulatorStatus(machineId, {
+    connected: true,
+    robotState: "JOB_RECEIVED",
+    activeJobId: job.jobId,
+    queueLength: list.length,
+  });
 
   console.log(
     `[simulator-relay] Dispatching job ${job.jobId.slice(0, 10)}… to machine ${machineId}`
@@ -172,6 +223,7 @@ export async function dispatchNextJob(machineId: string) {
     console.error(`[simulator-relay] Error dispatching job ${job.jobId}:`, err);
     machineStatus.set(machineId, "IDLE");
     activeJobPerMachine.delete(machineId);
+    updateSimulatorStatus(machineId, { robotState: "IDLE", activeJobId: null });
     // Try next in queue if any
     dispatchNextJob(machineId);
   }
@@ -194,6 +246,7 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
     case "MACHINE_ONLINE": {
       registerMachineSocket(msg.machineId, ws);
       machineStatus.set(msg.machineId, "IDLE");
+      updateSimulatorStatus(msg.machineId, { connected: true, robotState: "IDLE", activeJobId: null });
       console.log(`[simulator-relay] MACHINE_ONLINE from ${msg.machineId} at ${msg.timestamp}`);
       dispatchNextJob(msg.machineId);
       break;
@@ -201,6 +254,7 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
 
     case "HEARTBEAT": {
       registerMachineSocket(msg.machineId, ws);
+      updateSimulatorStatus(msg.machineId, { connected: true, robotState: msg.state });
       if (msg.state === "IDLE" && machineStatus.get(msg.machineId) !== "BUSY") {
         machineStatus.set(msg.machineId, "IDLE");
         dispatchNextJob(msg.machineId);
@@ -222,6 +276,11 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
 
     case "ROBOT_STATE_CHANGED": {
       upsertJob(msg.jobId, { stage: "executing" });
+      updateSimulatorStatus(msg.machineId, {
+        connected: true,
+        robotState: msg.state,
+        activeJobId: msg.jobId,
+      });
       break;
     }
 
@@ -242,6 +301,11 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
       };
 
       storeEvidence(msg.jobId, evidence);
+      updateSimulatorStatus(msg.machineId, {
+        connected: true,
+        robotState: "COMPLETED",
+        activeJobId: msg.jobId,
+      });
 
       try {
         console.log(`[simulator-relay] Signing and submitting SUCCESS proof for job ${msg.jobId}…`);
@@ -292,6 +356,7 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
       } finally {
         activeJobPerMachine.delete(msg.machineId);
         machineStatus.set(msg.machineId, "IDLE");
+        updateSimulatorStatus(msg.machineId, { activeJobId: null });
         dispatchNextJob(msg.machineId);
       }
       break;
@@ -313,6 +378,11 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
       };
 
       storeEvidence(msg.jobId, evidence);
+      updateSimulatorStatus(msg.machineId, {
+        connected: true,
+        robotState: "FAILED",
+        activeJobId: msg.jobId,
+      });
 
       try {
         console.log(`[simulator-relay] Signing and submitting FAILED proof (result 0) for job ${msg.jobId}…`);
@@ -358,6 +428,7 @@ export async function handleSimulatorMessage(ws: WebSocket, raw: string) {
       } finally {
         activeJobPerMachine.delete(msg.machineId);
         machineStatus.set(msg.machineId, "IDLE");
+        updateSimulatorStatus(msg.machineId, { activeJobId: null });
         dispatchNextJob(msg.machineId);
       }
       break;

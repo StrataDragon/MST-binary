@@ -16,7 +16,7 @@ import { getJob, listJobs, upsertJob } from "./store";
 import { startChainListener } from "./chainListener";
 import { storeMetadata, getMetadataByHash } from "./metadataStore";
 import { getEvidence, listAllEvidence } from "./evidenceStore";
-import { handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
+import { getSimulatorStatuses, handleSimulatorMessage, removeMachineSocket } from "./simulatorRelay";
 import { getTransactions, addSseClient, addWsClient, recordAndEmitTx, TransactionItem } from "./transactionStore";
 import { calculateJobPrice, JobType } from "./pricingEngine";
 
@@ -50,6 +50,12 @@ app.get("/health", (_req, res) => {
     machine051: { address: getMachineAddress("M-051"), machineId: "M-051" },
     verifier: { address: getVerifierAddress() },
   });
+});
+
+// ---------------------------------------------------------------- simulator status
+// This reflects the same WebSocket-driven state that animates the 3D scene.
+app.get("/api/simulator/status", (_req, res) => {
+  res.json({ machines: getSimulatorStatuses() });
 });
 
 // ---------------------------------------------------------------- dynamic pricing API

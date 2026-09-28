@@ -40,7 +40,8 @@ body {
   display: grid;
   grid-template-rows: auto 1fr auto auto;
   width: 100vw;
-  height: 100vh;
+  height: 100dvh;
+  min-height: 100dvh;
   gap: 12px;
   padding: 16px;
 }
@@ -81,6 +82,11 @@ body {
   overflow: hidden;
   border: 1px solid var(--border);
   background: #0b0d11;
+  isolation: isolate;
+}
+
+.stage canvas {
+  display: block;
 }
 
 .stage-overlay {
@@ -514,4 +520,114 @@ body {
 .result-toast.fail {
   color: var(--red);
   border-color: rgba(255, 92, 92, 0.4);
+}
+
+/* The scene owns the page on a large display, while the machine HUD remains
+   legible and scrollable instead of squeezing the Canvas to a sliver on a
+   smaller viewport. */
+@media (max-width: 1100px) {
+  .app-shell {
+    padding: 12px;
+    gap: 10px;
+  }
+
+  .app-main {
+    grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(190px, 240px);
+    gap: 10px;
+  }
+}
+
+@media (max-width: 860px) {
+  body {
+    overflow: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100dvh;
+    grid-template-rows: auto auto auto auto;
+  }
+
+  .app-main {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "stage stage"
+      "left right";
+  }
+
+  .stage {
+    grid-area: stage;
+    min-height: clamp(360px, 56vw, 520px);
+  }
+
+  .side-panel.left {
+    grid-area: left;
+  }
+
+  .side-panel.right {
+    grid-area: right;
+  }
+}
+
+@media (max-width: 580px) {
+  .app-shell {
+    width: 100%;
+    padding: 8px;
+    gap: 8px;
+  }
+
+  .app-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "stage"
+      "left"
+      "right";
+  }
+
+  .stage {
+    min-height: clamp(330px, 85vw, 440px);
+  }
+
+  .top-bar {
+    gap: 10px;
+  }
+
+  .top-metrics {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .metric-chip {
+    min-width: 0;
+    flex: 1 1 130px;
+  }
+
+  .stage-overlay {
+    top: 10px;
+    max-width: calc(100% - 20px);
+  }
+
+  .state-banner .state-text {
+    font-size: 12px;
+    padding: 7px 12px;
+  }
+
+  .telemetry-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .telemetry-cell:nth-child(2n) {
+    border-right: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
 }
