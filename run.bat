@@ -120,7 +120,18 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 
-REM 5. Start Hardhat node in new window if not already listening
+REM 5. Check network mode: skip local Hardhat if configured for MST Testnet
+findstr /C:"91562037" "integration\machinapay.contracts.json" >nul 2>&1
+if %ERRORLEVEL% equ 0 (
+    if /i not "%1"=="local" (
+        echo.
+        echo [INFO] Detected MST Testnet configuration (Chain ID: 91562037).
+        echo [INFO] Skipping local Hardhat node and deployment to preserve MST Testnet contracts.
+        goto SKIP_LOCAL_DEPLOY
+    )
+)
+
+REM Start Hardhat node in new window if not already listening
 echo.
 echo [3/6] Checking Hardhat node...
 netstat -ano | findstr ":8545 " | findstr "LISTENING" >nul 2>&1
@@ -163,6 +174,8 @@ call npm.cmd run seed:local
 if %ERRORLEVEL% neq 0 (
     echo [INFO] Seed completed with warning. Proceeding with service startup...
 )
+
+:SKIP_LOCAL_DEPLOY
 
 REM 7. Start Backend-service in new window if not already running
 echo.
