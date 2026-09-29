@@ -7,6 +7,11 @@ echo                     MachinaPay — Local Demo Launcher
 echo ======================================================================
 echo.
 
+if /i "%1"=="mst" (
+    call "%~dp0run-mst.bat"
+    exit /b %ERRORLEVEL%
+)
+
 REM Disable Hardhat telemetry prompt
 set HARDHAT_DISABLE_TELEMETRY=true
 set HARDHAT_TELEMETRY_DISABLED=true
